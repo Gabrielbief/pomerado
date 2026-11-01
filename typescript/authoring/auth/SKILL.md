@@ -366,9 +366,9 @@ session.
 Prefer an observed protected business/account page or authenticated workflow control that the
 signed-out flow cannot reach, corroborated by the live business example. Generic Sign out or
 account chrome alone does not establish access to the caller's workflow. The signed-in marker you
-send is a separate check, of presence only (`auth.sign-in-check`): for it, a site-wide account menu
-or sign-out control is the right choice once `check_signed_in_marker` shows the signed-out page
-lacks it. <!-- pomerado:section auth.signed-in-page:start
+send is a separate check, of presence only (`auth.sign-in-check`): choose it as "Every sign-in
+ends with its check" below says, once `check_signed_in_marker` shows the signed-out page lacks
+it. <!-- pomerado:section auth.signed-in-page:start
 Call `authenticate` with `signInStep: { signedIn: { selector } }`. When the landing page
 shows no such marker, add `openPath`, the observed path of an account page that does, and the host
 opens it and checks there; never guess a protected route.
@@ -415,9 +415,12 @@ host refuses one that names this account.
 
 The host checks the marker in many places across the site, not only where this sign-in lands:
 after every reset, at the start of every operation, after a page load in the middle of a run, and
-on whatever page a failure lands on. Choose a site-wide element only a signed-in user sees, such as
-the global header's account menu or sign-out control, never something only the page after sign-in
-shows.
+on whatever page a failure lands on. Off its own `urlPath`, a missing marker proves nothing: the
+host signs in again only on signed-out evidence, so the marker need not show everywhere. For a
+read, prefer the control your tool's first signed-in step uses, on a page a run can open directly,
+and set `urlPath` to that page. For a write, prefer a control only a signed-in account shows, such
+as the header's account menu or sign-out control, since the check before its first save must tell
+the account from a guest, and a form or save control may show to guests too.
 
 - Prefer stable attributes and names (`aria-label`, a role, visible text, a test id) over
   generated class names such as `css-1q2w3e`.
@@ -443,7 +446,7 @@ pomerado:section auth.marker-checks:end --> When it reports the signed-out page 
   with another marker. The marker must show on the signed-in page now. A fresh load never refuses
   it: the result reports `freshLoad`, and when it is false a notice says why. When the new tab
   showed the sign-in form, the site keeps its session only in page memory or session storage, and
-  the host signs in automatically at each operation start; the marker must still be site-wide.
+  the host signs in automatically at each operation start; the marker rules above still apply.
 
 The published tool records the check with its screens.
 
