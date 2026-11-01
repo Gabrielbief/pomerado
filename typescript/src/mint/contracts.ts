@@ -606,6 +606,14 @@ const SignInSelector = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(
 const SignedInUrlPath = Schema.String.pipe(Schema.pattern(/^\/[^?#]{0,1999}$/));
 const SignedInOpenPath = Schema.String.pipe(Schema.pattern(/^\/[^#]{0,1999}$/));
 /**
+ * A path on the site with its query: one `/`, then nothing the URL parser reads as another host
+ * (a second `/` or `\`, or a tab or line break it drops), no fragment, at most 2000 characters.
+ * No lookaround, which strict tool schemas refuse.
+ */
+const SignedInRequestPath = Schema.String.pipe(
+  Schema.pattern(/^\/([^\/\\#\t\n\r][^#]{0,1998})?$/),
+);
+/**
  * A signed-in marker the minting agent asks the host to test before it sends it
  * (`check_signed_in_marker`): its selector, with the path and account page `signedIn` takes.
  */
@@ -771,6 +779,16 @@ export const SignInStep = Schema.Union(
        * shows no marker itself; the selector or path is checked there.
        */
       openPath: Schema.optional(SignedInOpenPath),
+      /**
+       * A request a host may check in place of the marker on pages that don't show it. The local
+       * host ignores it and checks the marker alone.
+       */
+      requestPath: Schema.optional(
+        SignedInRequestPath.annotations({
+          description:
+            "A GET path on this site, with its query, that the site answers with success only while signed in and refuses or redirects to sign-in when signed out: one you saw the tool call or load while signed in, such as the signed-in user's own account endpoint or a data endpoint the tool reads, never a guessed route. Name nothing of this login or this visit in it, such as its account number, username, email, a record's ID or a session token, since it runs for every login. The host may check it in place of the marker where the tool's pages don't show the marker.",
+        }),
+      ),
     }).pipe(
       Schema.filter(
         (signedIn) => signedIn.selector !== undefined || signedIn.urlPath !== undefined,

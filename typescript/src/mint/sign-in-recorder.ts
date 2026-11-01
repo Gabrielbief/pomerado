@@ -7,7 +7,6 @@ import {
   codeBoxesRefusal,
   type AutofillInspection,
   type AutofillScreens,
-  type AutofillSignedIn,
   type AutofillStep,
   type AutofillStepReport,
 } from "../destinations/autofill-step.js";
@@ -65,6 +64,8 @@ import {
   identityNotices,
   identityRefusal,
   maskedMethodRefusal,
+  signedInCheckParts,
+  type SignedInStepCheck,
   stepIdentityRefusal,
 } from "./autofill-guards.js";
 import {
@@ -829,7 +830,7 @@ export const makeSignInRecorder = (input: {
     ),
   ];
 
-  const signedIn = (indicator: AutofillSignedIn) =>
+  const signedIn = (indicator: SignedInStepCheck) =>
     Effect.gen(function* () {
       const open = h.autofillSignIn.current;
       settleMinter(h, open);
@@ -843,7 +844,7 @@ export const makeSignInRecorder = (input: {
         )
       )
         return shown(yield* unsubmitted(h, open));
-      if ([indicator.selector, indicator.urlPath, indicator.openPath].some(holdsMask))
+      if (signedInCheckParts(indicator).some(holdsMask))
         return shown(
           result({
             signedIn: false,
