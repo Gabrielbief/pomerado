@@ -129,10 +129,10 @@ During the session:
   or returns a refusal its output schema declares before its first mark (below). Never return
   a refusal in an output shape the schema does not declare. Apart from such a declared
   refusal, prefer throwing over returning when a write stops before its first commit mark.
-  After a mark, when a step's result is unclear, prefer reading the site's own record of what
-  saved, such as the cart or the saved form, then finishing the remaining requested steps and
-  the final read-back with `verified()`, over throwing or returning early: publication review
-  refuses a path that stops there. A field error the site shows after an earlier save still
+  After a mark, when a step's result is unclear and commit steps remain, prefer reading the
+  site's own record of what saved, such as the cart or the saved form, then finishing the
+  remaining requested steps and the final read-back with `verified()`, over throwing or
+  returning early: publication review refuses a path that stops there. A field error the site shows after an earlier save still
   throws `InvalidInput` with that field and the site's message. A
   report of the form's fields, its validation messages or the options to pick from is a
   refusal (`InvalidInput` with `available`) or a failure (`OperationFailure`), not the write's
