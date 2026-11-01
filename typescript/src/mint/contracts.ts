@@ -780,7 +780,7 @@ export const SignInStep = Schema.Union(
       requestPath: Schema.optional(
         SignedInRequestPath.annotations({
           description:
-            "Hosted only. A GET path on the site, with its query, that the site answers with success only while signed in and refuses or redirects to sign-in when signed out, such as an account or data endpoint the tool reads. The host may check it in place of the marker where the tool's pages don't show the marker.",
+            "Hosted only. A GET path on the site, with its query, that the site answers with success only while signed in and refuses or redirects to sign-in when signed out, such as the signed-in user's own account endpoint or a data endpoint the tool reads. Name no account, record or other value of this login in it, since it runs for every login. The host may check it in place of the marker where the tool's pages don't show the marker.",
         }),
       ),
     }).pipe(
