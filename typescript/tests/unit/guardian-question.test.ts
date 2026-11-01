@@ -415,6 +415,47 @@ it("gives the question review the publication finding a question is about, and r
   expect(reworded.decision).toMatchObject({ outcome: "reword", label: "other" });
 });
 
+// A confirm question for a site change the request already named was reworded as already
+// authorized, because the review never heard that the host itself refused the change until the
+// caller confirms it.
+it("gives the question review the host's record of a change it refused until the caller confirms it", async () => {
+  const hostConfirmation = {
+    changes: [
+      { setting: "site", origin: "https://app.example.test" },
+      { setting: "login", change: "sign_in" },
+    ],
+  } as const;
+  const requests = scripted([
+    [message({ outcome: "allow_business", rationale: "The host needs this yes." })],
+  ]);
+  const candidate = await Effect.runPromise(
+    questionForReview(
+      {
+        questions: [
+          {
+            id: "move_site",
+            type: "confirm",
+            prompt: "Build the tool on https://app.example.test, where the sign-in landed?",
+          },
+        ],
+      },
+      { credentialsAvailable: false, hostConfirmation },
+      (text) => Effect.succeed(text),
+    ),
+  );
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      candidate,
+      unreadable,
+    ),
+  );
+  const input = JSON.parse(userText(requests[0])) as {
+    question_review: { hostConfirmation?: unknown };
+  };
+  expect(input.question_review.hostConfirmation).toEqual(hostConfirmation);
+});
+
 // A blocked report that cited an earlier denial was judged without it: the denial survived only in
 // Guardian's own compacted conversation.
 it("gives the blocked-explanation review the host's decision ledger as trusted evidence", async () => {

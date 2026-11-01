@@ -70,6 +70,7 @@ import type { SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 import {
   AnsweredQuestion,
   type ConfirmedStepQuestion,
+  type HostConfirmation,
   type QuestionFinding,
   type QuestionDecision,
 } from "../guardian/question.js";
@@ -2694,6 +2695,14 @@ export interface MintDependencies {
        * older host leaves it out.
        */
       readonly finding?: QuestionFinding;
+      /**
+       * The agent's own question only: the change of the site, the login or the effect a
+       * `mint_update` proposed that the harness refused as `confirmation_required`, until an update
+       * the caller confirmed applies. A host that forwards it to `questionForReview` lets the review
+       * tell the confirm question the host needs from one the request already settles; an older
+       * host leaves it out.
+       */
+      readonly hostConfirmation?: HostConfirmation;
     },
   ) => Effect.Effect<QuestionDecision & { readonly reviewId?: string }, MintFailure>;
   /**
