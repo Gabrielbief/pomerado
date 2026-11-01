@@ -605,6 +605,8 @@ export type MintRequest = typeof MintRequest.Type;
 const SignInSelector = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000));
 const SignedInUrlPath = Schema.String.pipe(Schema.pattern(/^\/[^?#]{0,1999}$/));
 const SignedInOpenPath = Schema.String.pipe(Schema.pattern(/^\/[^#]{0,1999}$/));
+/** A path on the site with its query, never another host (`//`) or a fragment. */
+const SignedInRequestPath = Schema.String.pipe(Schema.pattern(/^\/(?!\/)[^#]{0,1999}$/));
 /**
  * A signed-in marker the minting agent asks the host to test before it sends it
  * (`check_signed_in_marker`): its selector, with the path and account page `signedIn` takes.
@@ -771,6 +773,16 @@ export const SignInStep = Schema.Union(
        * shows no marker itself; the selector or path is checked there.
        */
       openPath: Schema.optional(SignedInOpenPath),
+      /**
+       * A request a host may check in place of the marker on pages that don't show it. The local
+       * host ignores it and checks the marker alone.
+       */
+      requestPath: Schema.optional(
+        SignedInRequestPath.annotations({
+          description:
+            "Hosted only. A GET path on the site, with its query, that the site answers with success only while signed in and refuses or redirects to sign-in when signed out, such as an account or data endpoint the tool reads. The host may check it in place of the marker where the tool's pages don't show the marker.",
+        }),
+      ),
     }).pipe(
       Schema.filter(
         (signedIn) => signedIn.selector !== undefined || signedIn.urlPath !== undefined,

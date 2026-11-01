@@ -94,3 +94,18 @@ it("keeps the signed-in page code's popups fifth, with no challenge check by def
   expect(code).toContain("const challengeFields = [];");
   expect(code).toContain("const authenticationOrigins = [];");
 });
+
+it("takes a signed-in step's request path beside its marker, as a same-site path only", () => {
+  const signedIn = { selector: "#account-menu", requestPath: "/api/account?fields=id" };
+  expect(Schema.decodeUnknownSync(SignInStep)({ signedIn })).toEqual({ signedIn });
+  for (const requestPath of ["https://other.example/api/account", "api/account", "/api#frag"])
+    expect(
+      Either.isLeft(
+        Schema.decodeUnknownEither(SignInStep)({ signedIn: { selector: "#menu", requestPath } }),
+      ),
+    ).toBe(true);
+  // A request path is no marker: a selector or a URL path still names one.
+  expect(
+    Either.isLeft(Schema.decodeUnknownEither(SignInStep)({ signedIn: { requestPath: "/api" } })),
+  ).toBe(true);
+});
