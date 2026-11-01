@@ -64,6 +64,8 @@ import {
 import {
   answersForReview,
   type AnsweredQuestion,
+  type HostConfirmation,
+  type HostConfirmationChange,
   questionNotNeededLabels,
   type QuestionFinding,
 } from "../guardian/question.js";
@@ -4109,6 +4111,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * minter to ask the caller. A takeover forgets it, so the caller may be asked once more.
        */
       let newBuildAskedAt: number | undefined;
+      /**
+       * The change of the site, the login or the effect the gate last refused until the caller
+       * confirms it, which the agent's questions are reviewed with until a confirmed update
+       * applies. A takeover forgets it: the gate records it again when the update comes back.
+       */
+      let hostConfirmation: HostConfirmation | undefined;
       /** Guardian's review of a confirmed update, then the host's application of an allowed one. */
       const reviewAndApplyTaskUpdate = (
         submitted: TaskUpdateRequest,
@@ -4271,6 +4279,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           const effectChanged = next.effect === "write" && buildEffect !== "write";
           const siteChanged = next.siteOrigin !== taskState.siteOrigin;
           taskState = next;
+          // The caller's confirmed update applied, so the host waits for no confirmation now.
+          if (submitted.confirmedBy.length > 0) hostConfirmation = undefined;
           // The first site's unconfirmed sign-in says nothing of the next site.
           if (siteChanged) {
             signInUnconfirmed = false;
@@ -6775,6 +6785,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   ...decidedBuildEffect(),
                   ...(confirms.length === 0 ? {} : { confirms }),
                   ...(finding === undefined ? {} : { finding }),
+                  ...(hostConfirmation === undefined ? {} : { hostConfirmation }),
                 });
                 yield* reviewCompleted;
                 reviewId = review.reviewId;
@@ -7202,22 +7213,30 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       dependencies.signedOutNarrows === true &&
                       change.setting === "login" &&
                       change.change === "signed_out";
+                    const widening = submitted.changes.flatMap(
+                      (change): HostConfirmationChange[] =>
+                        change.setting === "site"
+                          ? [{ setting: "site", origin: change.origin }]
+                          : change.setting === "login" && !narrows(change)
+                            ? [{ setting: "login", change: change.change }]
+                            : change.setting === "effect"
+                              ? [{ setting: "effect", effect: change.effect }]
+                              : [],
+                    );
                     if (
                       submitted.recommend === "update" &&
                       submitted.confirmedBy.length === 0 &&
-                      submitted.changes.some(
-                        (change) =>
-                          change.setting === "site" ||
-                          (change.setting === "login" && !narrows(change)) ||
-                          change.setting === "effect",
-                      )
-                    )
+                      widening.length > 0
+                    ) {
+                      // The agent's next questions are reviewed knowing the host needs this yes.
+                      hostConfirmation = { changes: widening };
                       return taskUpdateAnswer("clarification_required", {
                         source: "host",
                         reason: "confirmation_required",
                         instruction:
                           "A change of the site, the login or the effect widens what this build may do, so it needs the caller's confirmation and nothing changed. Ask the caller with request_input, then call mint_update again naming the questions they answered in confirmedBy.",
                       });
+                    }
                     const unanswered = submitted.confirmedBy.filter(
                       (id) => !answeredQuestions.has(id),
                     );
