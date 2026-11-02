@@ -98,3 +98,56 @@ test("a main page that closes during the wait still fails it", async ({ page }) 
   const answer = await call(page, submit(`setTimeout(() => page.close().catch(() => undefined), 100);`));
   expect(answer.error).toMatch(/Target page, context or browser has been closed/u);
 });
+
+test("a check that throws the site's words about something closed fails the wait with them at once", async ({
+  page,
+}) => {
+  await applicationSite(page, { busy: false });
+  const begun = Date.now();
+  const answer = await call(page, `
+    return await waitForOutcome({
+      done: page.getByRole("heading", { name: "Application received" }),
+      failed: { check: async () => { throw new Error("This job posting has been closed"); } },
+    }, { noProgressMs: 2000, timeout: 4000 });`);
+  expect(answer.error).toMatch(/This job posting has been closed$/u);
+  expect(Date.now() - begun).toBeLessThan(1500);
+});
+
+/** A sign-in popup whose Cancel button closes it 100 ms after the click. */
+const signInPopup = async (page: Page) => {
+  await page.context().route(`${origin}/**`, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: route.request().url().endsWith("/sign-in")
+        ? `<button type="button" id="cancel">Cancel</button>
+           <script>document.querySelector("#cancel").onclick = () => setTimeout(() => window.close(), 100);</script>`
+        : `<button type="button" id="sign-in" onclick="window.open('/sign-in', 'sign-in', 'popup')">Sign in</button>`,
+    }),
+  );
+  await page.goto(`${origin}/`);
+  const [popup] = await Promise.all([page.waitForEvent("popup"), page.locator("#sign-in").click()]);
+  await popup.locator("#cancel").waitFor();
+};
+
+test("a wait reading a popup that closes fails at once with the closed target", async ({ page }) => {
+  await signInPopup(page);
+  const begun = Date.now();
+  const answer = await call(page, `
+    const popup = page.context().pages().find((each) => each !== page);
+    return await waitForOutcome({
+      done: popup.getByRole("heading", { name: "Signed in" }),
+    }, { action: () => popup.locator("#cancel").click(), noProgressMs: 4000, timeout: 6000 });`);
+  expect(answer.error).toMatch(/Target page, context or browser has been closed/u);
+  expect(Date.now() - begun).toBeLessThan(2000);
+});
+
+test("a ready wait on a control in a popup that closed fails at once with the closed target", async ({ page }) => {
+  await signInPopup(page);
+  const begun = Date.now();
+  const answer = await call(page, `
+    const popup = page.context().pages().find((each) => each !== page);
+    await Promise.all([popup.waitForEvent("close"), popup.locator("#cancel").click()]);
+    return await waitForReady(popup.locator("#cancel"), { noProgressMs: 3000, timeout: 4000 });`);
+  expect(answer.error).toMatch(/Target page, context or browser has been closed/u);
+  expect(Date.now() - begun).toBeLessThan(2000);
+});
