@@ -234,6 +234,33 @@ test.describe("outcome race after an action", () => {
     expect((answer.evidence?.["fields"] as { field: string }[]).map(({ field }) => field)).toEqual(["Email"]);
   });
 
+  test("a hidden required input the browser flags in a form it doesn't check is no invalid outcome of a save", async ({
+    page,
+  }) => {
+    // The page saves by its own request: the browser's flag on the hidden input refused nothing.
+    await site(
+      page,
+      {
+        "/": `<form id="record" aria-label="Edit record" novalidate>
+            <div data-input-type="select">
+              <label for="colour">Colour</label><input id="colour" role="combobox" aria-expanded="false" readonly>
+              <input name="colour" required tabindex="-1" style="display:none">
+            </div>
+            <button id="save">Save</button>
+          </form>
+          <script>
+            document.forms[0].addEventListener("submit", (event) => {
+              event.preventDefault();
+              fetch("/api/records", { method: "POST", body: "{}" });
+            });
+          </script>`,
+      },
+      (_request, path) => (path === "/api/records" ? { status: 200, body: "{}", contentType: "application/json" } : undefined),
+    );
+    const answer = await race(page, `${saveOutcomes} sent: { response: { method: "POST", url: "/api/records" } },`);
+    expect(answer).toMatchObject({ outcome: "sent", kind: "response" });
+  });
+
   test("invalid fields already flagged before the action, and unchanged, wait for the unchanged window", async ({
     page,
   }) => {

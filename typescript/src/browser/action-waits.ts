@@ -405,6 +405,9 @@ const outcomeWaitInvalidInPage = (roots) => {
       if (seen.has(element) || !element.matches(marks)) continue;
       seen.add(element);
       if (!shows(element) && ![...(element.labels ?? [])].some(shows)) {
+        // The browser's own flag on a hidden control proves a refused submit only in a form it
+        // checks; in a novalidate form only the page's own flag counts.
+        if (element.form?.noValidate === true && !element.matches('[aria-invalid="true"], .is-invalid')) continue;
         // Named once, by the shown field, with the hidden control's message.
         const owner = ownerOf(element);
         if (owner === null || seen.has(owner)) continue;
