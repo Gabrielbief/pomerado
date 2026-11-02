@@ -183,6 +183,102 @@ test.describe("outcome race after an action", () => {
     expect((answer.evidence?.["fields"] as { message: string }[])[0]?.message).not.toBe("");
   });
 
+  test("a drop-down whose hidden required input stops the browser's own check is an invalid outcome under its label", async ({
+    page,
+  }) => {
+    // The visible boxes carry no required mark; each hidden input beside one does, so the
+    // browser refuses the submit over controls that never show.
+    await site(page, {
+      "/": `<form id="record" aria-label="Edit record" action="/api/records" method="post">
+          <label for="name">Name</label><input id="name" name="name" value="Sam">
+          <div data-input-type="select">
+            <label for="plan">Plan</label><input id="plan" role="combobox" aria-expanded="false" readonly>
+            <input name="plan" required tabindex="-1" style="display:none">
+          </div>
+          <div>
+            <span id="size-label">Size</span>
+            <div role="combobox" aria-labelledby="size-label" aria-expanded="false" tabindex="0">&#8203;</div>
+            <input name="size" required tabindex="-1" aria-hidden="true" style="opacity:0;position:absolute;width:1px;height:1px">
+          </div>
+          <button id="save">Save</button>
+        </form>`,
+    });
+    const answer = await race(page, `${saveOutcomes} sent: { response: { method: "POST", url: "/api/records" } },`);
+    expect(answer).toMatchObject({ outcome: "invalid", kind: "invalid" });
+    const fields = answer.evidence?.["fields"] as { field: string; message: string }[];
+    expect(fields.map(({ field }) => field)).toEqual(["Plan", "Size"]);
+    // The message is the browser's own, from the hidden input.
+    for (const { message } of fields) expect(message).not.toBe("");
+  });
+
+  test("a hidden required input two boxes share, or one with its own label, is no field's invalid outcome", async ({
+    page,
+  }) => {
+    await site(page, {
+      "/": `<form id="record" aria-label="Edit record" action="/api/records" method="post">
+          <div role="group" aria-labelledby="name-label"><span id="name-label">Full name</span>
+            <input aria-label="First name" name="first"><input aria-label="Last name" name="last">
+            <input name="full_name" required tabindex="-1" style="display:none">
+          </div>
+          <div data-input-type="select">
+            <label for="tier">Tier</label><input id="tier" role="combobox" aria-expanded="false" readonly>
+            <input aria-label="Tier code" name="tier_code" required tabindex="-1" style="display:none">
+          </div>
+          <label for="email">Email</label><input id="email" name="email" type="email" required>
+          <button id="save">Save</button>
+        </form>`,
+    });
+    // Only the visible field is named, as before.
+    const answer = await race(page, `${saveOutcomes} sent: { response: { method: "POST", url: "/api/records" } },`);
+    expect(answer).toMatchObject({ outcome: "invalid", kind: "invalid" });
+    expect((answer.evidence?.["fields"] as { field: string }[]).map(({ field }) => field)).toEqual(["Email"]);
+  });
+
+  test("a hidden input labelled with its drop-down's own name is an invalid outcome under that name", async ({
+    page,
+  }) => {
+    await site(page, {
+      "/": `<form id="record" aria-label="Edit record" action="/api/records" method="post">
+          <div data-input-type="select">
+            <span id="colour-label">Colour</span>
+            <input role="combobox" aria-labelledby="colour-label" aria-expanded="false" readonly>
+            <input aria-labelledby="colour-label" name="colour" required tabindex="-1" style="display:none">
+          </div>
+          <button id="save">Save</button>
+        </form>`,
+    });
+    const answer = await race(page, `${saveOutcomes} sent: { response: { method: "POST", url: "/api/records" } },`);
+    expect(answer).toMatchObject({ outcome: "invalid", kind: "invalid" });
+    expect((answer.evidence?.["fields"] as { field: string }[]).map(({ field }) => field)).toEqual(["Colour"]);
+  });
+
+  test("a hidden required input the browser flags in a form it doesn't check is no invalid outcome of a save", async ({
+    page,
+  }) => {
+    // The page saves by its own request: the browser's flag on the hidden input refused nothing.
+    await site(
+      page,
+      {
+        "/": `<form id="record" aria-label="Edit record" novalidate>
+            <div data-input-type="select">
+              <label for="colour">Colour</label><input id="colour" role="combobox" aria-expanded="false" readonly>
+              <input name="colour" required tabindex="-1" style="display:none">
+            </div>
+            <button id="save">Save</button>
+          </form>
+          <script>
+            document.forms[0].addEventListener("submit", (event) => {
+              event.preventDefault();
+              fetch("/api/records", { method: "POST", body: "{}" });
+            });
+          </script>`,
+      },
+      (_request, path) => (path === "/api/records" ? { status: 200, body: "{}", contentType: "application/json" } : undefined),
+    );
+    const answer = await race(page, `${saveOutcomes} sent: { response: { method: "POST", url: "/api/records" } },`);
+    expect(answer).toMatchObject({ outcome: "sent", kind: "response" });
+  });
+
   test("invalid fields already flagged before the action, and unchanged, wait for the unchanged window", async ({
     page,
   }) => {
