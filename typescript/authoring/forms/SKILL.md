@@ -126,6 +126,7 @@ run the search as after a pick, with the site's Search button or Enter, and read
 page as any search's. Prefer refusing on the site's own words that it found nothing for that text
 over `pickRefusal`. Never use this fallback in a write. Handle a site's quirk with the helper's options, such as `query`,
 `answered`, `committed`, `commit: "keyboard"` or `blur: "tab"`, never with a picker of your own.
+Publication review sends one back ("Own picker").
 When a picker's options depend on another field, such as times on a date or a party size, models
 on a make or regions on a country, set that field first, whatever order the page shows them in,
 then pick once its options have loaded for that value.
@@ -134,7 +135,7 @@ then pick once its options have loaded for that value.
 `references/dates-and-dropdowns.ts` fills a split date and `references/selection.ts` a native
 select. `references/custom-selection.ts` and
 `references/dialog-picker.ts` write out a combobox and a dialog picker step by step, for a
-control the helper cannot drive; report that gap with what the page showed.
+control `pickValue` was seen failing on; say in the code what the page showed.
 
 Preserve add/replace and single/multiple intent. `pickValues`' `mode` keeps or replaces
 the chips already chosen. Query aliases
