@@ -11,7 +11,7 @@ import type {
   ScriptQuestionDeclarations,
 } from "./script-input.js";
 import type { EffectJournal, NotCommittedOptions, WriteConfirmation } from "./context.js";
-import type { Deadline } from "./deadline.js";
+import { timeoutDefaults, type Deadline } from "./deadline.js";
 import { CommitAlreadySent, WriteConfirmationRefused, type Dispatch } from "./errors.js";
 import type { WriteDeclaration } from "./operation.js";
 import { kernelTimeoutSec } from "./kernel-execute-client.js";
@@ -600,6 +600,58 @@ export const isKernelOperation = (
   typeof Reflect.get(value, "run") === "function";
 
 /**
+ * Page code that wraps the page's and locators' `click` for one call. A click Playwright made that
+ * timed out only waiting for the page load it started counts as done once that page commits in
+ * the clicked frame or the main frame, within the navigation budget from the click and before the
+ * call's own limit. A page that doesn't commit by then leaves the click's own timeout, as before.
+ * Every other click is Playwright's own, and a `page` that isn't Playwright's is left as it is. It
+ * is one line, so the call's code keeps its line numbers.
+ */
+const clickNavigationWait = String.raw`(until) => {
+  if (typeof page === "undefined" || typeof page?.mainFrame !== "function" || typeof page.locator !== "function") return () => {};
+  const wrap = (prototype) => {
+    const click = prototype.click;
+    const waited = async function (...args) {
+      const tab = typeof this.mainFrame === "function" ? this : this.page();
+      const clicked = this._frame ?? tab.mainFrame();
+      const startedAt = Date.now();
+      let seen;
+      const committed = new Promise((resolve) => {
+        seen = (frame) => {
+          if (frame === clicked || frame === tab.mainFrame()) resolve(true);
+        };
+      });
+      tab.on("framenavigated", seen);
+      try {
+        return await click.apply(this, args);
+      } catch (error) {
+        if (error?.name !== "TimeoutError" || !/-\s+click action done[^\n]*\n[^\n]*-\s+waiting for scheduled navigations to finish[^\n]*\s*$/u.test(String(error.message))) throw error;
+        let timer;
+        const expired = new Promise((resolve) => {
+          timer = setTimeout(resolve, Math.min(startedAt + ${timeoutDefaults.navigation}, until) - Date.now(), false);
+        });
+        const done = await Promise.race([committed, expired]);
+        clearTimeout(timer);
+        if (!done) throw error;
+      } finally {
+        tab.off("framenavigated", seen);
+      }
+    };
+    prototype.click = waited;
+    return () => {
+      if (prototype.click === waited) prototype.click = click;
+    };
+  };
+  const restores = [wrap(Object.getPrototypeOf(page)), wrap(Object.getPrototypeOf(page.locator(":root")))];
+  return () => restores.forEach((restore) => restore());
+}`.replace(/\n\s*/gu, " ");
+
+/** A call's code inside `clickNavigationWait`, which ends a second before its `timeout_sec`. */
+const withClickNavigationWait = (code: string, timeoutSec = 60) =>
+  `const __pomeradoClickNavigation = (${clickNavigationWait})(Date.now() + ${timeoutSec * 1000 - 1000}); try {${code}
+} finally { __pomeradoClickNavigation(); }`;
+
+/**
  * One run of a script's function against a Kernel client: Kernel's own, or the saved-DOM stand-in.
  * A throw that is not one of its typed errors becomes an `OperationFailure`.
  */
@@ -635,7 +687,11 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
                   Effect.flatMap(() =>
                     Effect.tryPromise({
                       try: () =>
-                        browser.kernel.browsers.playwright.execute(sessionId, body, options),
+                        browser.kernel.browsers.playwright.execute(
+                          sessionId,
+                          { ...body, code: withClickNavigationWait(body.code, body.timeout_sec) },
+                          options,
+                        ),
                       catch: (error) =>
                         error instanceof Error ? error : new Error(String(error), { cause: error }),
                     }),
