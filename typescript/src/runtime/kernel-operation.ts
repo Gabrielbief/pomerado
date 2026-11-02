@@ -351,7 +351,7 @@ const callerFileReasons: ReadonlySet<string> = new Set([
  * A download the host refused over its size caps, as the script's failure: the page made the
  * file, so it is the host's limit, never the caller's input, and the message names the cap.
  */
-const downloadCapFailures: Partial<Record<FileRefusalReason, string>> = {
+export const downloadCapFailures: Partial<Record<FileRefusalReason, string>> = {
   too_large: "The downloaded file is over the host's size limit for one file (too_large)",
   run_limit: "The downloaded file is over the host's limit for one run's files (run_limit)",
 };

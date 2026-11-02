@@ -44,6 +44,7 @@ import { fileReadbackRefusal } from "../mint/file-readback.js";
 import { cardReadbackRefusal } from "../mint/card-readback.js";
 import { makeLocalFileHook } from "../execution/local-files.js";
 import { makeRunFiles } from "../runtime/file-transfer.js";
+import { downloadCapFailures } from "../runtime/kernel-operation.js";
 import { stepInput } from "../mint/step-checks.js";
 import { admitListCursor, sealListOutput } from "../runtime/list-cursor.js";
 import { mintListScope, refusedCursor } from "./list-cursors.js";
@@ -300,6 +301,18 @@ const actOutcome = (
  */
 const uncollectedFileMessage =
   "This output holds a `$file` that is not exactly a file this execution collected. Return each file as `files.collect` gave it, and put any other fact about the file in a separate field.";
+
+/**
+ * The cap a failed step's download went over, only when the step failed with that refusal: a
+ * script that caught it and then failed another way reports its own failure.
+ */
+const capRefusalOf = (failure: Error, cap: DownloadCap | undefined) =>
+  cap !== undefined &&
+  failure instanceof LocalOperationFailure &&
+  failure.tag === "OperationFailure" &&
+  failure.message === downloadCapFailures[cap.limit === "file" ? "too_large" : "run_limit"]
+    ? cap
+    : undefined;
 
 type Journal = Parameters<MintDependencies["reviewAndExecute"]>[2];
 interface ReceiptInput {
@@ -665,7 +678,8 @@ const authoredExecution = (
             : writePathRemaining(writeSession.path, sessionEnteredMarks(writeSession.steps));
         if (execution.purpose === "example" && executed._tag === "Right")
           context.setInputSchema(executed.right.schemas.input);
-        const fileCap = runFiles?.overCap?.();
+        const fileCap =
+          executed._tag === "Left" ? capRefusalOf(executed.left, runFiles?.overCap?.()) : undefined;
         const receipt = {
           state,
           execution,

@@ -1155,10 +1155,10 @@ export interface ExecutionEvidence {
    */
   readonly refusal?: { readonly field?: string; readonly available: readonly string[] };
   /**
-   * Trusted host marker on a failed execution: the host refused a download this execution
-   * collected over its own file caps, with the cap (`RunFiles.overCap`). No change to the source
-   * gets that file past it, so a `host_refused` report stands on it. Optional, so a host that
-   * never sets it keeps today's answers.
+   * Trusted host marker on a failed execution whose failure is the host's refusal of a download
+   * over its own file caps, with the cap (`RunFiles.overCap`). No change to the source makes that
+   * same file smaller, so a `host_refused` report stands on it until a later example or act step
+   * settles without one. Optional, so a host that never sets it keeps today's answers.
    */
   readonly fileCap?: DownloadCap;
   readonly resultRef?: string;

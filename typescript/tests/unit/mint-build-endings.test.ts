@@ -581,6 +581,68 @@ it.each([
   },
 );
 
+// A download cap refusal stands only until a later example settles without it: one that ran past
+// the cap, or failed for another reason such as a selector that matched nothing, leaves a report
+// on that example no host refusal to stand on.
+it.each([
+  {
+    later: "completed",
+    evidence: {
+      executionId: "execution_after_cap",
+      status: "completed" as const,
+      effect: "verified" as const,
+      resultRef: "protected_result",
+      observations: { value: "public" },
+    },
+  },
+  {
+    later: "failed for another reason",
+    evidence: {
+      executionId: "execution_after_cap",
+      status: "failed" as const,
+      effect: "possible" as const,
+      observations: { message: "The selector never matched." },
+    },
+  },
+] as const)(
+  "refuses host_refused once a later example $later after a download over the cap",
+  async ({ evidence }) => {
+    let executions = 0;
+    const f = await fixture(
+      (_request, index) =>
+        [
+          call("execute", { ...pureExample, target: "liveBrowser" }, "capped"),
+          call("execute", { ...pureExample, target: "liveBrowser" }, "later"),
+          call("report_blocked", { reason: "host_refused", explanation: "Too big." }, "report"),
+        ][index] ?? prose("Stopping."),
+      {
+        repeatableRead: true,
+        reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
+          beforeDispatch(readAllow).pipe(
+            Effect.as(
+              executions++ === 0
+                ? {
+                    executionId: "execution_over_cap",
+                    status: "failed" as const,
+                    effect: "possible" as const,
+                    observations: { message: "The downloaded file is over the host's cap." },
+                    fileCap: { limit: "file", maxBytes: 26_214_400 },
+                  }
+                : evidence,
+            ),
+          ),
+      },
+      { mode: "maintenance", observations: { failure: "The file did not come back." } },
+    );
+    const outcome = await f.run();
+    expect(resultOf(f.requests[3], "report")).toMatchObject({
+      status: "blocked_refused",
+      reason: "host_not_refused",
+    });
+    expect(outcome).not.toHaveProperty("blocked");
+  },
+);
+
 // A failed example with no cap refusal on record is no host refusal: the report is still refused.
 it("refuses host_refused after a failed download the host did not refuse over its caps", async () => {
   const f = await fixture(

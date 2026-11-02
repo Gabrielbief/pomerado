@@ -67,3 +67,19 @@ it("names the run's caps when a download would take the run's files over them", 
   expect(refused.reason).toBe("run_limit");
   expect(files.overCap?.()).toEqual({ limit: "run", maxBytes: 15, maxFiles: 3 });
 });
+
+it("names no cap once a later capture starts", async () => {
+  const files = await Effect.runPromise(
+    makeRunFiles({
+      hook: hookTaking([{ tooLarge: true }, text(8)]),
+      execute: unused,
+      siteOrigin: "https://files.example.test",
+      resolve: () => undefined,
+      limits: { fileBytes: 10, runFiles: 3, runBytes: 100 },
+    }),
+  );
+  await Effect.runPromise(Effect.flip(collectOne(files)));
+  expect(files.overCap?.()).toEqual({ limit: "file", maxBytes: 10 });
+  await Effect.runPromise(collectOne(files));
+  expect(files.overCap?.()).toBeUndefined();
+});

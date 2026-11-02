@@ -818,12 +818,13 @@ const capWords = (cap: DownloadCap) =>
     : `cap of ${capSize(cap.maxBytes)}${cap.maxFiles === undefined ? "" : ` or ${cap.maxFiles} files`} for one run`;
 /**
  * What the minter hears on an execution whose download the host refused over its file caps
- * (`ExecutionEvidence.fileCap`): which cap, that no change to the source gets the file past it,
- * and that ending host_refused is preferred over asking the owner to narrow the request.
+ * (`ExecutionEvidence.fileCap`): which cap, that no change to the source makes that same file
+ * smaller, that a smaller file of the same content is preferred, and that ending host_refused is
+ * preferred over asking the owner to narrow the request.
  */
 const fileCapInstruction = (cap: DownloadCap) =>
   cap.limit === "file"
-    ? `The host refused this download: it is over the host's ${capWords(cap)}, and no change to the source gets it under that cap. When the request needs this file, prefer report_blocked with reason host_refused, naming the cap in explanation, over asking the owner to narrow the request.`
+    ? `The host refused this download: it is over the host's ${capWords(cap)}, and no change to the source makes this same file smaller. If the site offers the same content as a smaller file, such as another format, prefer collecting that. When the request needs this file, prefer report_blocked with reason host_refused, naming the cap in explanation, over asking the owner to narrow the request.`
     : `The host refused this download: it would take this run's files over the host's ${capWords(cap)}, and only a run that collects fewer or smaller files fits under it. When the request needs these files in one run, prefer report_blocked with reason host_refused, naming the cap in explanation, over asking the owner to narrow the request.`;
 
 /** Copy known receipt fields without invoking an optional hostile accessor. */
@@ -1442,7 +1443,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       let actRefusalsInRow = 0;
       /**
        * A host check refused a step the build needs in this attempt: a publication its checks
-       * refused, a sign-in the host refused, or a task update the host refused. A `host_refused`
+       * refused, a sign-in the host refused, a task update the host refused, or a download over
+       * its file caps, until a later example or act step settles without one. A `host_refused`
        * block stands on it. A later finish_build that gets past the host's checks to Guardian's
        * review clears it, setting `hostRefusalPassed`.
        */
@@ -1469,6 +1471,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           ...standingHostRefusals.filter((standing) => JSON.stringify(standing.refusal) !== key),
           { refusal, beforeSignIn: false },
         ];
+      };
+      /**
+       * Drops the standing download cap refusals, once a later example or act step settled
+       * without one. A refusal of any other source stands, and with none left no host refusal
+       * stands.
+       */
+      const dropFileCapRefusals = () => {
+        const kept = standingHostRefusals.filter(({ refusal }) => refusal?.source !== "file_cap");
+        if (kept.length === standingHostRefusals.length) return;
+        standingHostRefusals = kept;
+        if (kept.length === 0) hostRefused = false;
       };
       /** A later authenticate may have sent the login after every host refusal standing now. */
       const loginSentSinceHostRefusals = () => {
@@ -2143,9 +2156,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       ) =>
         Effect.gen(function* () {
           record(evidence, purpose);
-          // A download over the host's own file caps is a host check's refusal no change to the
-          // source gets past: a host_refused report stands on it, and the blocked explanation's
-          // review reads it in the ledger.
+          // A download over the host's own file caps is a host check's refusal: a host_refused
+          // report stands on it, and the blocked explanation's review reads it in the ledger. It
+          // stands only until a later example or act step settles without it, which ran past
+          // the cap or failed for another reason, so a report on that step stands on what it met.
           const fileCap = safeExecutionEvidence(evidence).fileCap;
           if (fileCap !== undefined) {
             refuseByHost({ source: "file_cap", ...fileCap });
@@ -2154,7 +2168,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               fileCap.limit === "file" ? "too_large" : "run_limit",
               `The host refused a download over its ${capWords(fileCap)}.`,
             );
-          }
+          } else if (
+            (purpose === "example" || purpose === "act") &&
+            (evidence.status === "completed" || evidence.status === "failed")
+          )
+            dropFileCapRefusals();
           const handedBack = evidence.noResponse !== undefined && handsBackNoAnswer();
           if (handedBack) yield* questionHandedBack();
           const receipt = yield* visible(evidence, purpose, handedBack);
