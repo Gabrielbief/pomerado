@@ -332,7 +332,9 @@ const outcomeWaitTextMatches = (matcher, text) => {
 // Runs in the page: every control under the roots the site marked invalid, with its label and its
 // message. A control is invalid when it has aria-invalid="true", the is-invalid class, or fails the
 // browser's own validation after the person tried to submit (:user-invalid). One hidden behind a
-// styled control counts when its label shows.
+// styled control counts when its label shows. A hidden one with no label of its own, such as a
+// custom drop-down's validation input beside its visible box, counts under the one shown field
+// it belongs to, as the form helpers read it.
 const outcomeWaitInvalidInPage = (roots) => {
   const marks = '[aria-invalid="true"], .is-invalid' +
     (globalThis.CSS?.supports?.("selector(:user-invalid)") ? ", :user-invalid" : "");
@@ -359,13 +361,57 @@ const outcomeWaitInvalidInPage = (roots) => {
     if (near && near !== element && !near.contains(element) && shows(near)) return clean(near.innerText, 200);
     return clean(element.validationMessage, 200);
   };
+  const fieldSelector =
+    "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]), select, textarea, [role=combobox], [role=textbox], [aria-haspopup=listbox], [contenteditable=true]";
+  // The outermost shown fields under node, beside the hidden control.
+  const shownFields = (node, hidden) => {
+    const shown = [...node.querySelectorAll(fieldSelector)].filter((each) =>
+      each !== hidden && shows(each) && each.getAttribute("aria-hidden") !== "true");
+    return shown.filter((each) => !shown.some((other) => other !== each && other.contains(each)));
+  };
+  // The one shown field a hidden select, text area or input (not a box to tick, a button to choose
+  // or a file to attach) with no label of its own stands in for: the nearest element around it
+  // holding any shown field holds only that one, and one of that field's wrappers, holding no
+  // other shown field, holds the hidden control: its select container, its group, or the nearest
+  // element holding it and its label.
+  const ownerOf = (hidden) => {
+    const kind = hidden instanceof HTMLSelectElement || hidden instanceof HTMLTextAreaElement ||
+      (hidden instanceof HTMLInputElement && !["checkbox", "radio", "file"].includes(hidden.type));
+    const labelled = (hidden.labels?.length ?? 0) > 0 || hidden.closest("label") !== null ||
+      hidden.hasAttribute("aria-label") || hidden.hasAttribute("aria-labelledby");
+    if (!kind || labelled) return null;
+    for (let node = hidden.parentElement; node !== null; node = node.parentElement) {
+      const near = shownFields(node, hidden);
+      if (near.length === 0) continue;
+      if (near.length > 1) return null;
+      const [field] = near;
+      const named = [...(field.labels ?? []),
+        ...String(field.getAttribute("aria-labelledby") ?? "").split(/\s+/).filter(Boolean).map((id) => document.getElementById(id))]
+        .filter(Boolean);
+      const holders = named.map((each) => {
+        let up = field;
+        while (up !== null && !up.contains(each)) up = up.parentElement;
+        return up;
+      });
+      return [field.closest("[data-input-type=select]"), field.closest("[role=group]"), ...holders].some((wrapper) =>
+        wrapper !== null && wrapper.contains(hidden) && shownFields(wrapper, hidden).length === 1) ? field : null;
+    }
+    return null;
+  };
   const fields = [];
   const seen = new Set();
   for (const root of roots)
     for (const element of [root, ...root.querySelectorAll(marks)]) {
       if (seen.has(element) || !element.matches(marks)) continue;
       seen.add(element);
-      if (!shows(element) && ![...(element.labels ?? [])].some(shows)) continue;
+      if (!shows(element) && ![...(element.labels ?? [])].some(shows)) {
+        // Named once, by the shown field, with the hidden control's message.
+        const owner = ownerOf(element);
+        if (owner === null || seen.has(owner)) continue;
+        seen.add(owner);
+        fields.push({ field: label(owner), message: message(element) });
+        continue;
+      }
       fields.push({ field: label(element), message: message(element) });
     }
   return fields.slice(0, 20);

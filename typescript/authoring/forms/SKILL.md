@@ -247,9 +247,9 @@ Before a write's first commit step, prefer `unfilledRequiredFields` over your ow
 discovery, and ask for every empty required field it lists that no input covers in one round of
 site-field questions. Some sites keep a drop-down's required flag on a hidden input beside the
 visible box; the helper reads it. After the final click, prefer adding an `invalid` outcome to
-`waitForOutcomeResult`, so a submit the browser blocked comes back with each field's message;
-then, once `blockingRequiredFields` returns those fields, call `notCommitted` for that step
-before asking, as the writes skill says.
+its `waitForOutcomeResult`, so a submit the browser blocked comes back with each field's
+message; then, once `blockingRequiredFields` returns those fields, call `notCommitted` for that
+step before asking, as the writes skill says.
 
 Expose prerequisite resolvers for valid choices. A prepare/confirm flow binds the
 draft to the account and requires caller-expected item, quantity, amount/currency
