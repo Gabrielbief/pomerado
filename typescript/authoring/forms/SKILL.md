@@ -135,7 +135,7 @@ then pick once its options have loaded for that value.
 `references/dates-and-dropdowns.ts` fills a split date and `references/selection.ts` a native
 select. `references/custom-selection.ts` and
 `references/dialog-picker.ts` write out a combobox and a dialog picker step by step, for a
-control the helper cannot drive; report that gap with what the page showed.
+control `pickValue` was seen failing on; say in the code what the page showed.
 
 Preserve add/replace and single/multiple intent. `pickValues`' `mode` keeps or replaces
 the chips already chosen. Query aliases
