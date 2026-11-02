@@ -317,9 +317,9 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   validation summary or field errors, none of them a conflict or duplicate, and no next page or
   confirmation, is that proof too, unless `blockingRequiredFields` returns fields to ask or
   `unaskable` (above): call `notCommitted` for that step with `{ siteRefused: true }`. Then prefer
-  throwing `InvalidInput` with the site's words when every field it flags holds the caller's own
-  value, since the caller can fix it, and `OperationFailure` with the site's words otherwise,
-  since the tool filled or left one of them wrong.
+  throwing `InvalidInput` with the site's words when it flags one or more fields and every one
+  holds the caller's own value, since the caller can fix it, and `OperationFailure` with the site's
+  words otherwise, since the tool filled or left one of them wrong.
 - A quote the site issued earlier, such as a fare, rate, cart price or hold, can expire before
   the commit, for example while the step waits for review. Prefer having the commit step reload
   or re-select it right before its mark, so the site issues a fresh one, and check that one
