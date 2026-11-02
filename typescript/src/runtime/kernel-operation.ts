@@ -204,8 +204,9 @@ export interface KernelOperationContext<
    * `{ siteRefused: true }`, then return the refusal, or refresh the quote, check it again and
    * enter the step for one more click. Pass `siteRefused` only for such a refusal. When the page
    * flags fields or shows a validation message after the click, call `blockingRequiredFields`
-   * instead. A host may refuse to let a step be entered again when its click had neither that
-   * refusal nor `blockingRequiredFields`' fields.
+   * first; when it returns none and the same form shows again with no next page or confirmation,
+   * the site refused the save as a whole. A host may refuse to let a step be entered again when
+   * its click had neither that refusal nor `blockingRequiredFields`' fields.
    * It works once per step in a run, and only for a step in the contract's `write.commits` when it
    * declares any: a second call for the same step, another name, a step this run did not enter
    * from unsent, or one confirmed since throws `CommitAlreadySent`, which ends the run with the
