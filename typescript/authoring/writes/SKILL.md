@@ -146,9 +146,8 @@ During the session:
   used instead of throwing `InvalidInput`. Only the caller's task text counts this way; an
   output field or description you wrote does not.
 - When a write's form adds required fields that depend on earlier answers, prefer declaring
-  the site-field question and asking it for each empty required field `unfilledRequiredFields`
-  lists that no input covers (forms skill), before that step's commit mark, over refusing.
-  When such a field shows only after the step's click, ask it
+  the site-field question and asking it for a required field that no input covers, before that
+  step's commit mark, over refusing. When such a field shows only after the step's click, ask it
   once `blockingRequiredFields` returns it, which proves the click saved nothing: call
   `notCommitted` for the step before you ask, then fill the answer, check the step again, then
   call `enteringCommit` again with the step's name, and click once. When a step shows several
