@@ -3,11 +3,13 @@ import type { Page } from "playwright";
 import { waitCode } from "../../src/browser/wait.js";
 import { makeLocalKernel } from "../../src/testing/local-kernel.js";
 
-// The outcome race, run as a Kernel call body runs it (`page` in scope), on a page whose
-// cross-site frame goes away while the wait reads it. The frame must run in its own process, as
-// a cross-site frame does in a browser with site isolation: Playwright then reports a read the
-// frame's removal cut short as a closed target, not as a detached frame.
-test.use({ launchOptions: { args: ["--site-per-process"] } });
+// The outcome race, run as a Kernel call body runs it (`page` in scope), on a page that removes a
+// cross-site frame while the wait reads it. The frame must run in its own process, as a
+// cross-site frame does in a browser with site isolation: Playwright then reports a read of the
+// frame after it went as a closed target, not as a detached frame. A trace reads every frame
+// around each call, which would hold up the click until the frame went, so this file runs
+// without one.
+test.use({ launchOptions: { args: ["--site-per-process"] }, trace: "off" });
 
 const call = async (page: Page, body: string) => {
   const answer = await makeLocalKernel(page).browsers.playwright.execute("session-1", {
@@ -21,19 +23,14 @@ const origin = "https://apply.example.test";
 const checkOrigin = "https://verification.test";
 
 /**
- * An application form with a cross-site verification frame. Submit asks the frame to verify, and
- * the page removes the frame 300 ms later and shows its heading. The frame's script is busy until
- * then, so a read into the frame is still running when the frame goes.
+ * An application form with a cross-site verification frame. 300 ms after Submit is clicked, the
+ * page removes the frame and shows its heading. With `busy`, the page's script runs through those
+ * 300 ms, so a look that listed the frames as it started reads the main page once it ends, and
+ * then the frame, which is gone by then.
  */
-const applicationSite = async (page: Page) => {
+const applicationSite = async (page: Page, { busy }: { busy: boolean }) => {
   await page.context().route(`${checkOrigin}/**`, (route) =>
-    route.fulfill({
-      contentType: "text/html",
-      body: `<p>Verifying you are human</p>
-        <script>
-          addEventListener("message", () => { const end = Date.now() + 5000; while (Date.now() < end); });
-        </script>`,
-    }),
+    route.fulfill({ contentType: "text/html", body: "<p>Verifying you are human</p>" }),
   );
   await page.context().route(`${origin}/**`, (route) =>
     route.fulfill({
@@ -42,14 +39,18 @@ const applicationSite = async (page: Page) => {
         <button type="button" id="submit">Submit application</button>
         <iframe id="verification" title="Verification" src="${checkOrigin}/widget"></iframe>
         <script>
-          document.querySelector("#submit").onclick = () => {
-            const frame = document.querySelector("#verification");
-            // Once the click is handled, so Submit returns before the frame is busy.
-            setTimeout(() => frame.contentWindow.postMessage("verify", "*"));
-            setTimeout(() => {
-              frame.remove();
-              document.body.insertAdjacentHTML("beforeend", "<h1>Application received</h1>");
-            }, 300);
+          const received = () => {
+            document.querySelector("#verification").remove();
+            document.body.insertAdjacentHTML("beforeend", "<h1>Application received</h1>");
+          };
+          document.querySelector("#submit").onclick = ${
+            busy
+              ? `() => setTimeout(() => {
+                  const until = Date.now() + 300;
+                  while (Date.now() < until);
+                  received();
+                })`
+              : `() => setTimeout(received, 300)`
           };
         </script>`,
     }),
@@ -60,8 +61,9 @@ const applicationSite = async (page: Page) => {
 
 // The received heading or the site's error, after Submit. The error check reads every frame, as
 // a status check over a page that embeds a widget does. The wait reads the outcomes highest
-// priority last, so each look runs the check first. `after` runs once Submit returns.
-const submit = (after = "") => `
+// priority last, so each look runs the check first. The action does not wait on the page after
+// the click, and returns once the site's script began. `before` runs as Submit is clicked.
+const submit = (before = "") => `
   return await waitForOutcome({
     done: page.getByRole("heading", { name: "Application received" }),
     failed: {
@@ -75,8 +77,9 @@ const submit = (after = "") => `
     },
   }, {
     action: async () => {
-      await page.locator("#submit").click();
-      ${after}
+      ${before}
+      await page.locator("#submit").click({ noWaitAfter: true });
+      await waitSleep(50);
     },
     noProgressMs: 2000,
     timeout: 4000,
@@ -85,12 +88,13 @@ const submit = (after = "") => `
 test("a check reading a frame that closes loses that look, and the next look sees the outcome", async ({
   page,
 }) => {
-  await applicationSite(page);
+  await applicationSite(page, { busy: true });
   expect(await call(page, submit())).toEqual({ result: "done" });
 });
 
 test("a main page that closes during the wait still fails it", async ({ page }) => {
-  await applicationSite(page);
+  await applicationSite(page, { busy: false });
+  // It closes before the heading shows, while the wait reads the page and its frame.
   const answer = await call(page, submit(`setTimeout(() => page.close().catch(() => undefined), 100);`));
   expect(answer.error).toMatch(/Target page, context or browser has been closed/u);
 });
