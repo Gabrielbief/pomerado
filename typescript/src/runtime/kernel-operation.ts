@@ -601,42 +601,41 @@ export const isKernelOperation = (
 
 /**
  * Page code that wraps the page's and locators' `click` for one call. A click Playwright made that
- * timed out only waiting for the page load it started counts as done once that page commits in
- * the clicked frame or the main frame, within the navigation budget from the click and before the
- * call's own limit. A page that doesn't commit by then leaves the click's own timeout, as before.
- * Every other click is Playwright's own, and a `page` that isn't Playwright's is left as it is. It
- * is one line, so the call's code keeps its line numbers.
+ * timed out only waiting for the page load it started counts as done once the main frame next
+ * commits, within the navigation budget from the click and before the call's own limit. Only a
+ * commit after the timeout counts, so a URL the click's own handler changed in place doesn't. A
+ * page that doesn't commit by then leaves the click's own timeout, as before. Every other click
+ * is Playwright's own, and a `page` that isn't Playwright's is left as it is. Each wrapper holds
+ * Playwright's own click, which the next call wraps instead of a wrapper a call left behind. It is
+ * one line, so the call's code keeps its line numbers.
  */
 const clickNavigationWait = String.raw`(until) => {
   if (typeof page === "undefined" || typeof page?.mainFrame !== "function" || typeof page.locator !== "function") return () => {};
+  const own = Symbol.for("pomerado.clickNavigation.original");
   const wrap = (prototype) => {
-    const click = prototype.click;
+    const click = prototype.click?.[own] ?? prototype.click;
     const waited = async function (...args) {
       const tab = typeof this.mainFrame === "function" ? this : this.page();
-      const clicked = this._frame ?? tab.mainFrame();
       const startedAt = Date.now();
-      let seen;
-      const committed = new Promise((resolve) => {
-        seen = (frame) => {
-          if (frame === clicked || frame === tab.mainFrame()) resolve(true);
-        };
-      });
-      tab.on("framenavigated", seen);
       try {
         return await click.apply(this, args);
       } catch (error) {
         if (error?.name !== "TimeoutError" || !/-\s+click action done[^\n]*\n[^\n]*-\s+waiting for scheduled navigations to finish[^\n]*\s*$/u.test(String(error.message))) throw error;
+        let seen;
         let timer;
-        const expired = new Promise((resolve) => {
+        const committed = await new Promise((resolve) => {
+          seen = (frame) => {
+            if (frame === tab.mainFrame()) resolve(true);
+          };
+          tab.on("framenavigated", seen);
           timer = setTimeout(resolve, Math.min(startedAt + ${timeoutDefaults.navigation}, until) - Date.now(), false);
         });
-        const done = await Promise.race([committed, expired]);
-        clearTimeout(timer);
-        if (!done) throw error;
-      } finally {
         tab.off("framenavigated", seen);
+        clearTimeout(timer);
+        if (!committed) throw error;
       }
     };
+    waited[own] = click;
     prototype.click = waited;
     return () => {
       if (prototype.click === waited) prototype.click = click;
