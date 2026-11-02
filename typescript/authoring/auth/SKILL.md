@@ -366,12 +366,16 @@ session.
 Prefer an observed protected business/account page or authenticated workflow control that the
 signed-out flow cannot reach, corroborated by the live business example. Generic Sign out or
 account chrome alone does not establish access to the caller's workflow. The signed-in marker you
-send is a separate check, of presence only (`auth.sign-in-check`): for it, a site-wide account menu
-or sign-out control is the right choice once `check_signed_in_marker` shows the signed-out page
-lacks it. <!-- pomerado:section auth.signed-in-page:start
-Call `authenticate` with `signInStep: { signedIn: { selector } }`. When the landing page
-shows no such marker, add `openPath`, the observed path of an account page that does, and the host
-opens it and checks there; never guess a protected route.
+send is a separate check, of presence only (`auth.sign-in-check`); send it once
+`check_signed_in_marker` shows the signed-out page lacks it. <!-- pomerado:section auth.signed-in-page:start
+Call `authenticate` with `signInStep: { signedIn: { selector } }`. The host checks the marker in
+many places across the site, not only where this sign-in lands: after every reset, at the start of
+every operation, after a page load in the middle of a run, and on whatever page a failure lands
+on. Choose a site-wide element only a signed-in user sees, such as the global header's account
+menu or sign-out control, never something only the page after sign-in shows, even when the site
+keeps its session only in page memory or session storage. When the landing page shows no such
+marker, add `openPath`, the observed path of an account page that does, and the host opens it and
+checks there; never guess a protected route.
 pomerado:section auth.signed-in-page:end --> The host checks that the submitted
 sign-in's recorded controls/form no longer show a password entry awaiting sign-in; unrelated
 password controls on the account page do not fail this check. It also checks that this sign-in
@@ -411,13 +415,7 @@ the same field on the same screen three times in a row ends sign-in in this buil
 Every sign-in you record ends with a deterministic sign-in check, sent as `signInStep.signedIn`: a
 marker every signed-in account shows and a signed-out page never does. Never put an account's
 name, email or number in it: the check publishes with the tool and runs for every login, and the
-host refuses one that names this account.
-
-The host checks the marker in many places across the site, not only where this sign-in lands:
-after every reset, at the start of every operation, after a page load in the middle of a run, and
-on whatever page a failure lands on. Choose a site-wide element only a signed-in user sees, such as
-the global header's account menu or sign-out control, never something only the page after sign-in
-shows.
+host refuses one that names this account. Where the marker must show is under "Signed in" above.
 
 - Prefer stable attributes and names (`aria-label`, a role, visible text, a test id) over
   generated class names such as `css-1q2w3e`.
@@ -443,7 +441,7 @@ pomerado:section auth.marker-checks:end --> When it reports the signed-out page 
   with another marker. The marker must show on the signed-in page now. A fresh load never refuses
   it: the result reports `freshLoad`, and when it is false a notice says why. When the new tab
   showed the sign-in form, the site keeps its session only in page memory or session storage, and
-  the host signs in automatically at each operation start; the marker must still be site-wide.
+  the host signs in automatically at each operation start.
 
 The published tool records the check with its screens.
 
