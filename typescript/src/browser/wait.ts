@@ -105,8 +105,21 @@ const waitBounded = (promise, ms, fallback = undefined) => {
   ]).finally(() => clearTimeout(timer));
 };
 const waitSeconds = (ms) => (Math.max(0, ms) / 1000).toFixed(1) + " s";
-const waitContextLost = (error) =>
-  /Execution context was destroyed|Frame was detached/.test(String(error?.message));
+// How many reads in a row the running wait lost to a closed target. waitProgress sets it to 0 as a
+// wait starts, and again at the sample after a look that lost none.
+let waitClosedLosses = 0;
+// A read the page cut short by replacing or removing what it read, so the next look reads again.
+// A cross-site frame runs as a target of its own, and a read of one that went reports a closed
+// target. While the call's page is open, that target was a frame of it, which goes once. A page
+// that closed, such as a popup the wait reads, fails every look instead, so the third such read in
+// a row throws.
+const waitContextLost = (error) => {
+  const message = String(error?.message);
+  if (/Execution context was destroyed|Frame was detached/.test(message)) return true;
+  if (!/Target page, context or browser has been closed|Target closed/.test(message) || page.isClosed()) return false;
+  waitClosedLosses += 1;
+  return waitClosedLosses < 3;
+};
 // Generic loading signs. A busy region or an indeterminate progress bar says the page is loading;
 // a determinate bar (one with a value) is a rating, a step or a meter. A class that names a
 // skeleton, shimmer, spinner or loader is only a hint, and never on a form control.
@@ -196,6 +209,8 @@ const waitRequestKey = (request) => {
 const waitProgress = (options = {}) => {
   const noProgressMs = options.noProgressMs ?? waitLimits.answer;
   const key = "pomerado.waitProgress." + Date.now() + "." + Math.random();
+  waitClosedLosses = 0;
+  let closedAtSample = 0;
   let started = Date.now();
   // Requests that start before this are the action's: from the baseline look, taken just before
   // the action, to a second after it returned. A wait without an action causes none.
@@ -278,6 +293,11 @@ const waitProgress = (options = {}) => {
     const now = Date.now();
     samples += 1;
     sampledAt = now;
+    // A look that lost a read to a closed target saw no progress by it. One that lost none ends
+    // the run of such losses.
+    if (waitClosedLosses > closedAtSample) changes = changes.filter((kind) => kind !== "page replaced");
+    else waitClosedLosses = 0;
+    closedAtSample = waitClosedLosses;
     const note = (kind) => {
       if (!baseline) mark(kind, now);
     };
@@ -343,8 +363,9 @@ const waitProgress = (options = {}) => {
         region = seen;
       }
     } catch (error) {
+      const closedBefore = waitClosedLosses;
       if (!waitContextLost(error)) throw error;
-      note("page replaced");
+      if (waitClosedLosses === closedBefore) note("page replaced");
     }
   };
   return {
@@ -542,7 +563,8 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
     cleanupMs = () => Math.min(250, beforeStop());
     const unchangedMs = options.unchangedMs ?? waitLimits.unchanged;
     const unchangedFrom = begun + unchangedMs;
-    // A page or frame the action is replacing can drop a look midway; the next look sees the new one.
+    // A page or frame the action is replacing or removing can drop a look midway; the next look
+    // reads the page again.
     // The page cannot always be read: a native dialog stops its scripts, and while a navigation
     // is pending Playwright cannot evaluate in it. A look the page holds up ends at the deadline
     // (with outcomeWaitLateMs of grace, so a look begun just before it finishes), at once for a dialog,

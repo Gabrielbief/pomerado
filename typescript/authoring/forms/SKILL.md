@@ -215,6 +215,16 @@ sets a file input from base64 input with `setInputFiles` uses a deprecated patte
 still allows while the build has no file handle and no `FileInput`: a repair keeps its input as
 it is, and a new tool takes a `FileInput` and uses `files.place`.
 
+When a form asks for more than one upload, prefer one `FileInput` per upload, named for the site's
+label, each placed by its own `files.place` call. Prefer making an input required only when every
+form the tool fills requires its upload; one a repair adds stays optional, so existing callers keep
+working. Before filling anything, prefer checking each upload the page marks required. When the
+tool's input for it holds no file, prefer throwing `new errors.InvalidInput(message, { field })`
+before any commit mark, with a message that starts "Caller input error:" and names that upload by
+the site's label. When no input takes that upload, the tool lacks it, not the caller: prefer
+throwing `new errors.OperationFailure(message)` before any commit mark, naming that upload by the
+site's label, so a repair can add an optional input for it.
+
 Some sites' Download or Share button only prints the page, through `window.print` or a print
 frame in the site's code, and offers no file. Prefer checking the site's code or page before
 clicking such a button live, since its print dialog can stop the page from answering. When the
