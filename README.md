@@ -205,7 +205,7 @@ Join the [Pomerado Discord](https://discord.gg/QCwQFydAym) to get help, share in
 - Pomerado is agent friendly. [AGENTS.md](AGENTS.md) gives your coding agent the setup and the rules.
 - Alan or Akshay reviews every pull request before it merges.
 - Everyone follows our [code of conduct](CODE_OF_CONDUCT.md).
-- Security problems go privately through **Report a vulnerability** on the [Security tab](https://github.com/Pomerado/pomerado/security).
+- Security problems go privately to security@pomerado.ai or through **Report a vulnerability** on the [Security tab](https://github.com/Pomerado/pomerado/security). [SECURITY.md](SECURITY.md) has the details.
 - [CONTRIBUTING.md](CONTRIBUTING.md) has the steps to build, test and open a pull request.
 
 ## License
