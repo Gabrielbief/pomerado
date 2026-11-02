@@ -4,7 +4,7 @@ We welcome bug reports, documentation improvements and code contributions. Start
 
 Pomerado is agent friendly. Point your coding agent at [AGENTS.md](AGENTS.md), which has the setup, the layout and the rules it should follow. You answer for its changes as if you wrote them.
 
-Please follow our [code of conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately with **Report a vulnerability** on the [Security tab](https://github.com/Pomerado/pomerado/security), never in a public issue.
+Please follow our [code of conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately, never in a public issue: email security@pomerado.ai or use **Report a vulnerability** on the [Security tab](https://github.com/Pomerado/pomerado/security). See [SECURITY.md](SECURITY.md).
 
 ## Set up the repository
 
