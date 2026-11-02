@@ -109,7 +109,14 @@ export const blockingFieldsHook = "__pomeradoBlockingFields";
  *   is visible, enabled, empty and marked `required` or `aria-required="true"`, or flagged invalid
  *   (`aria-invalid="true"`, the `is-invalid` class or the browser's own check after a submit). A
  *   control inside another one, such as a combobox's own text box, counts as that one, with its
- *   required mark, flag and value. Each is `{ label, shape, options? }`, its label from its
+ *   required mark, flag and value. So does a hidden required control with no label of its own,
+ *   not displayed or `aria-hidden="true"`, such as a custom drop-down's validation input beside
+ *   its visible box, inside a wrapper of a visible field (its closest `[data-input-type=select]`
+ *   or `[role=group]`, or the nearest element holding it and its label), when the nearest
+ *   element around the hidden control that holds any visible field holds only that one: the
+ *   field is required, flagged when the hidden control is and empty while it is, and the visible
+ *   box is what gets filled. A hidden control that belongs to no one field counts as before.
+ *   Each is `{ label, shape, options? }`, its label from its
  *   `<label for>`, a wrapping label, `aria-labelledby` or `aria-label`. A text box, select or
  *   combobox with a label is supported, and a select or combobox listing 1 to 50 options now
  *   carries them as `{ value, label }`, ready for a site-field question. Any other field comes back
@@ -412,10 +419,13 @@ const formControlTextTypes = new Set(["", "text", "email", "tel", "url", "number
  * browser's own check after a submit), each with its label, its supported shape or unsupported, a
  * select's or combobox's options when it lists 1 to 50 now, whether the page flagged it, and its
  * control. A control inside another one, such as a combobox's own text box, is that one, and
- * its required mark, flag and value count as that one's. Mode "flagged" keeps only the flagged
- * ones, each with its keys (its label and every name and id it and its inner controls carry), and
- * counts the flagged controls that are not empty; mode "labels" returns the keys of every visible
- * control instead, and mode "enabled labels" those of every visible, enabled one.
+ * its required mark, flag and value count as that one's. A hidden required control with no label
+ * of its own that belongs to one visible field, by that field's wrappers, stands in for it: its
+ * required mark, flag and value count as that field's, and it is never a field itself. Mode
+ * "flagged" keeps only the flagged ones, each with its keys (its label and every name and id it
+ * and its inner controls carry), and counts the flagged controls that are not empty; mode
+ * "labels" returns the keys of every visible control instead, and mode "enabled labels" those of
+ * every visible, enabled one.
  */
 const formControlRequiredFields = async (scope, timeout, mode = "required") => {
   const candidates = scope.locator(formControlFieldSelector);
@@ -494,16 +504,63 @@ const formControlRequiredFields = async (scope, timeout, mode = "required") => {
     const enabledOf = (element) => !element.matches(":disabled") && element.getAttribute("aria-disabled") !== "true";
     if (mode === "labels" || mode === "enabled labels")
       return { labels: outer.filter((element) => shown(element) && (mode === "labels" || enabledOf(element))).flatMap(keysOf) };
+    // A hidden control the browser checks as required, such as a custom drop-down's validation
+    // input beside its visible box, may stand in for that box.
+    const standsIn = (element) =>
+      (element instanceof HTMLInputElement || element instanceof HTMLSelectElement ||
+        element instanceof HTMLTextAreaElement) &&
+      element.required && element.willValidate &&
+      (!shown(element) || element.getAttribute("aria-hidden") === "true");
+    const visibleFields = outer.filter((element) => shown(element) && !standsIn(element));
+    // A field's wrappers: its select container, its group, and the nearest element holding it and
+    // its label.
+    const wrappersOf = (element) => {
+      const ids = (element.getAttribute("aria-labelledby") ?? "").split(/\s+/).filter(Boolean);
+      const labels = [
+        ...Array.from(element.labels ?? []),
+        ...ids.map((id) => element.ownerDocument.getElementById(id)).filter(Boolean),
+      ];
+      const holding = labels.map((label) => {
+        let node = element;
+        while (node !== null && !node.contains(label)) node = node.parentElement;
+        return node;
+      });
+      return [element.closest("[data-input-type=select]"), element.closest("[role=group]"), ...holding]
+        .filter(Boolean);
+    };
+    // The one visible field a stand-in belongs to: the nearest element above it holding a visible
+    // field holds only that one, one of its wrappers holds the stand-in, and the stand-in has no
+    // label but the field's own. Otherwise it is no field's, and counts as before.
+    const ownerOf = (standIn) => {
+      for (let node = standIn.parentElement; node !== null; node = node.parentElement) {
+        const near = visibleFields.filter((field) => node.contains(field));
+        if (near.length === 0) continue;
+        const [field] = near;
+        const named = nameOf(standIn);
+        const wrapped = wrappersOf(field).some((wrapper) => wrapper.contains(standIn));
+        return near.length === 1 && wrapped && (named === "" || named === nameOf(field)) ? field : null;
+      }
+      return null;
+    };
+    const standInsOf = new Map();
+    for (const standIn of outer.filter(standsIn)) {
+      const owner = ownerOf(standIn);
+      if (owner !== null) standInsOf.set(owner, [...(standInsOf.get(owner) ?? []), standIn]);
+    }
+    const claimed = new Set([...standInsOf.values()].flat());
     let flaggedFilled = 0;
     const fields = elements.flatMap((element, index) => {
-      if (!outer.includes(element)) return [];
-      // A combobox's own text box, inside it, carries its required mark, flag and value.
+      if (!outer.includes(element) || claimed.has(element)) return [];
+      // A combobox's own text box, inside it, carries its required mark, flag and value. A hidden
+      // stand-in beside it carries the required mark, its flag and the value.
       const parts = partsOf(element);
+      const standIns = standInsOf.get(element) ?? [];
       const enabled = enabledOf(element);
-      const flagged = parts.some((part) => part.matches(flagMarks));
-      const required = flagged || parts.some((part) => part.required === true || part.getAttribute("aria-required") === "true");
+      const flagged = [...parts, ...standIns].some((part) => part.matches(flagMarks));
+      const required = flagged || standIns.length > 0 ||
+        parts.some((part) => part.required === true || part.getAttribute("aria-required") === "true");
       if (!shown(element) || !enabled || !required) return [];
-      if (!parts.every(isEmpty)) {
+      if (standIns.length > 0 ? !standIns.some(isEmpty) : !parts.every(isEmpty)) {
         if (flagged) flaggedFilled += 1;
         return [];
       }
