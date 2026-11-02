@@ -531,6 +531,82 @@ it.each([
   }
 });
 
+// A download over the host's own file caps is the host's limit, which no change to the source gets
+// past. A repair's host_refused report was refused as host_not_refused, so its minter could stop
+// only by asking the owner to narrow the request. The failed example now names the cap, and the
+// report stands on it at once, naming the cap as its basis.
+it.each([
+  { limit: "file", cap: { limit: "file", maxBytes: 26_214_400 } },
+  { limit: "run", cap: { limit: "run", maxBytes: 52_428_800, maxFiles: 10 } },
+] as const)(
+  "ends a repair as host_refused on a download over the host's $limit cap",
+  async ({ cap }) => {
+    const explanation = "The file is over the host's download cap, so it cannot be returned.";
+    const f = await fixture(
+      (_request, index) =>
+        [
+          call("execute", { ...pureExample, target: "liveBrowser" }, "example"),
+          call("report_blocked", { reason: "host_refused", explanation }, "report"),
+        ][index] ?? prose("Stopping."),
+      {
+        reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
+          beforeDispatch(readAllow).pipe(
+            Effect.as({
+              executionId: "execution_over_cap",
+              status: "failed" as const,
+              effect: "possible" as const,
+              observations: { message: "The downloaded file is over the host's cap." },
+              fileCap: cap,
+            }),
+          ),
+      },
+      { mode: "maintenance", observations: { failure: "The file did not come back." } },
+    );
+    const outcome = await f.run();
+    // The report ends the build: no answer to it goes back to the minter, such as host_not_refused.
+    expect(f.requests.length > 2 ? resultOf(f.requests[2], "report") : undefined).toBeUndefined();
+    expect(outcome).toMatchObject({
+      build: "incomplete",
+      blocked: { reason: "host_refused", explanation },
+      stopReason: "host_refused",
+    });
+    expect(blockedRecord(outcome)).toMatchObject({
+      hostRefusals: [{ source: "file_cap", ...cap }],
+    });
+    expect(f.requests).toHaveLength(2);
+    expect(resultOf(f.requests[1], "example")).toMatchObject({
+      fileCap: { ...cap, instruction: expect.stringContaining("host_refused") },
+    });
+  },
+);
+
+// A failed example with no cap refusal on record is no host refusal: the report is still refused.
+it("refuses host_refused after a failed download the host did not refuse over its caps", async () => {
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...pureExample, target: "liveBrowser" }, "example"),
+        call("report_blocked", { reason: "host_refused", explanation: "Too big." }, "report"),
+      ][index] ?? prose("Stopping."),
+    {
+      reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(readAllow).pipe(
+          Effect.as({
+            executionId: "execution_failed",
+            status: "failed" as const,
+            effect: "possible" as const,
+            observations: { message: "The downloaded file is over the host's cap (too_large)" },
+          }),
+        ),
+    },
+    { mode: "maintenance", observations: { failure: "The file did not come back." } },
+  );
+  const outcome = await f.run();
+  expect(resultOf(f.requests[1], "example")).not.toHaveProperty("fileCap");
+  expect(outcome).not.toHaveProperty("blocked");
+  expect(lastResult(f.requests[2])).toContain("host_not_refused");
+});
+
 /** What an accepted ending's `phase: "blocked"` diagnostic says the host refusal stood on. */
 const blockedRecord = (outcome: { readonly diagnostics: readonly string[] }) =>
   outcome.diagnostics

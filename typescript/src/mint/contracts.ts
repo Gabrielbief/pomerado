@@ -27,6 +27,7 @@ import type {
 } from "../runtime/policy-metadata.js";
 import { Context, Data, Schema, type Effect } from "effect";
 import { commitMarkMaxLength, commitMarkPattern } from "../runtime/operation.js";
+import { DownloadCap } from "../runtime/files.js";
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { SignInVersionFinding } from "./sign-in-version.js";
 import {
@@ -194,7 +195,9 @@ const ClosedCode = Schema.String.pipe(
  * - `sign_in_step`: the host refused a sign-in step, with the sign-in's code and the check that
  *   refused it;
  * - `task_update`: the host refused to apply a task update, with its reason, or `other` for one
- *   core does not name.
+ *   core does not name;
+ * - `file_cap`: an execution's download went over the host's own file caps, with the cap
+ *   (`DownloadCap`).
  */
 export const HostRefusalSource = Schema.Union(
   Schema.Struct({
@@ -221,6 +224,10 @@ export const HostRefusalSource = Schema.Union(
       "change_unsupported",
       "other",
     ),
+  }),
+  Schema.Struct({
+    source: Schema.Literal("file_cap"),
+    ...DownloadCap.fields,
   }),
 );
 export type HostRefusalSource = typeof HostRefusalSource.Type;
@@ -1147,6 +1154,13 @@ export interface ExecutionEvidence {
    * this way is its publication receipt, since maintenance cannot change the caller's input.
    */
   readonly refusal?: { readonly field?: string; readonly available: readonly string[] };
+  /**
+   * Trusted host marker on a failed execution: the host refused a download this execution
+   * collected over its own file caps, with the cap (`RunFiles.overCap`). No change to the source
+   * gets that file past it, so a `host_refused` report stands on it. Optional, so a host that
+   * never sets it keeps today's answers.
+   */
+  readonly fileCap?: DownloadCap;
   readonly resultRef?: string;
   /** Private output is screened before returning to the agent. */
   readonly observations: unknown;
@@ -1223,6 +1237,7 @@ export const ExecutionEvidence: Schema.Schema<ExecutionEvidence> = Schema.Struct
   ),
   preflight: Schema.optionalWith(Schema.Literal("rejected_before_claim"), { exact: true }),
   refusal: Schema.optionalWith(ExecutionRefusal, { exact: true }),
+  fileCap: Schema.optionalWith(DownloadCap, { exact: true }),
   resultRef: Schema.optionalWith(Schema.String, { exact: true }),
   observations: Schema.Unknown,
   checks: Schema.optionalWith(

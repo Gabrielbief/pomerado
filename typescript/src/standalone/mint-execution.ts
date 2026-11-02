@@ -53,6 +53,7 @@ import { InputRequestFailure, type InputAsker } from "../runtime/input-request.j
 import { siteDomain } from "../runtime/same-site.js";
 import { probeCallCode } from "../runtime/host-execute.js";
 import type { BrowserExecute } from "../runtime/browser-execution.js";
+import type { DownloadCap } from "../runtime/files.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
 import type { MintState } from "./mint-state.js";
 import {
@@ -324,6 +325,8 @@ interface ReceiptInput {
   readonly writePathRemaining?: readonly string[];
   /** The step ran after the host sent a login no check verified; see `afterUnverifiedSignIn`. */
   readonly afterUnverifiedSignIn?: true;
+  /** The latest download the step's files refused over the host's caps (`RunFiles.overCap`). */
+  readonly fileCap?: DownloadCap;
 }
 /** The allow a receipt carries: Guardian's review, outcome, rationale and action label. */
 const reviewFeedback = ({ reviewId, decision }: ReceiptInput["reviewed"]): MintReviewFeedback => ({
@@ -391,6 +394,7 @@ const failedReceipt = (
         ...(writeSession === undefined ? {} : { writeSession }),
       },
       review: reviewFeedback(reviewed),
+      ...(receipt.fileCap === undefined ? {} : { fileCap: receipt.fileCap }),
       ...(scriptQuestion === undefined ? {} : { scriptQuestion }),
       ...(unanswered || (failure instanceof LocalOperationFailure && failure.code === "NoResponse")
         ? { noResponse: { possibleCommit: execution.purpose === "act" } }
@@ -661,6 +665,7 @@ const authoredExecution = (
             : writePathRemaining(writeSession.path, sessionEnteredMarks(writeSession.steps));
         if (execution.purpose === "example" && executed._tag === "Right")
           context.setInputSchema(executed.right.schemas.input);
+        const fileCap = runFiles?.overCap?.();
         const receipt = {
           state,
           execution,
@@ -673,6 +678,7 @@ const authoredExecution = (
           ...(act?.writeSession === undefined ? {} : { writeSession: act.writeSession }),
           ...(pathLeft.length === 0 ? {} : { writePathRemaining: pathLeft }),
           ...(afterUnverifiedSignIn ? { afterUnverifiedSignIn: true as const } : {}),
+          ...(fileCap === undefined ? {} : { fileCap }),
         };
         const evidence = yield* executed._tag === "Left"
           ? failedReceipt(receipt, executed.left, questions)

@@ -5,6 +5,7 @@ import type { BrowserExecute } from "./browser-execution.js";
 import { acceptsSource, bytesMatchType, isProgram, sniffedType } from "./file-types.js";
 import {
   defaultFileLimits,
+  type DownloadCap,
   FileField,
   fileFormat,
   FileName,
@@ -94,6 +95,12 @@ export interface FileHostHook {
 export interface RunFiles extends FileChannel {
   /** Fails unless every `$file` object in `output` is a file this run collected, unchanged. */
   readonly checkOutput: (output: unknown) => Effect.Effect<void, FileRefused>;
+  /**
+   * The latest download this run refused over the host's caps, with the cap, else undefined. A
+   * build's host marks the failed execution with it (`ExecutionEvidence.fileCap`). Optional, so a
+   * host's own file service may leave it out; `makeRunFiles` always sets it.
+   */
+  readonly overCap?: () => DownloadCap | undefined;
 }
 
 /** A refusal before any page call: nothing reached the page. */
@@ -296,6 +303,16 @@ export const makeRunFiles = (options: {
 }): Effect.Effect<RunFiles> =>
   Effect.gen(function* () {
     const limits = options.limits ?? defaultFileLimits;
+    /** The latest download refused over the caps, with the cap it went over. */
+    let overCap: DownloadCap | undefined;
+    const refuseOverCap = (reason: "too_large" | "run_limit") =>
+      Effect.suspend(() => {
+        overCap =
+          reason === "too_large"
+            ? { limit: "file", maxBytes: limits.fileBytes }
+            : { limit: "run", maxBytes: limits.runBytes, maxFiles: limits.runFiles };
+        return refuse(reason);
+      });
     const used = yield* Ref.make({ files: 0, bytes: 0 });
     const collected = yield* Ref.make<readonly FileObject[]>([]);
     const slots = new Set<string>();
@@ -391,10 +408,11 @@ export const makeRunFiles = (options: {
           .takeDownload(slot, { timeoutMs, maxBytes: Math.max(0, room) })
           .pipe(Effect.mapError(() => new FileRefused({ reason: "unavailable" })));
         if (taken === undefined) return yield* refuse("no_download");
-        if ("tooLarge" in taken) return yield* refuse(room < limits.fileBytes ? "run_limit" : "too_large");
+        if ("tooLarge" in taken)
+          return yield* refuseOverCap(room < limits.fileBytes ? "run_limit" : "too_large");
         const name = safeName(taken.name, "download");
         if (isProgram(taken.bytes, name)) return yield* refuse("executable");
-        if (!(yield* fits(taken.bytes.byteLength))) return yield* refuse("run_limit");
+        if (!(yield* fits(taken.bytes.byteLength))) return yield* refuseOverCap("run_limit");
         yield* count(taken.bytes.byteLength);
         // The bytes decide the type when they prove one, else the server's; never the name.
         const media_type =
@@ -428,7 +446,7 @@ export const makeRunFiles = (options: {
             : refuse("not_collected"),
         ),
       );
-    return { place, arm, collect, checkOutput };
+    return { place, arm, collect, checkOutput, overCap: () => overCap };
   });
 
 /** Every `$file` object in an output, wherever it sits. */

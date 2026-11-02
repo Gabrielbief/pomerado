@@ -85,6 +85,7 @@ import {
   type TaskUpdateConfirmer,
 } from "../guardian/task-update.js";
 import { siteDomain } from "../runtime/same-site.js";
+import { DownloadCap } from "../runtime/files.js";
 import { validateSignedInMarker } from "../destinations/signed-in-marker.js";
 import { isCardSlot } from "../destinations/payment-frames.js";
 import { finiteCaptureGap, finiteRunnerFailure } from "./runner-failure.js";
@@ -635,6 +636,7 @@ const restoredHostRefusals = (kept: unknown) => {
 const hostRefusalApartFromSignIn = (refusal: HostRefusalBasis, beforeSignIn: boolean) =>
   refusal.source === "sign_in_destination" ||
   refusal.source === "task_update" ||
+  refusal.source === "file_cap" ||
   (refusal.source === "sign_in_step" && !beforeSignIn);
 /**
  * A failure's code as diagnostics and publication evidence name it. A review whose outcome
@@ -806,6 +808,24 @@ const siteAccessDiagnostic = (evidence: ExecutionEvidence): SiteAccessDiagnostic
 const withheldConfirmationInstruction =
   "This step read the write's confirmation, so the write went out, but the host did not accept its result, so it confirms nothing yet. Never repeat the write: entering its commit steps again is refused. Fix the source if the host said why, then run one act step that only reads the confirmation or the saved state back and records it, and publish against that step. Only if no step can read it back, call finish_build naming this step with readBackUnavailable saying why; it then publishes with no output kept.";
 
+/** A byte cap as the minter reads it: whole MiB with its bytes, else bytes. */
+const capSize = (bytes: number) =>
+  bytes % 1_048_576 === 0 ? `${bytes / 1_048_576} MiB (${bytes} bytes)` : `${bytes} bytes`;
+/** The host's file cap a download went over, as words. */
+const capWords = (cap: DownloadCap) =>
+  cap.limit === "file"
+    ? `the host's cap of ${capSize(cap.maxBytes)} for one file`
+    : `the host's cap of ${capSize(cap.maxBytes)}${cap.maxFiles === undefined ? "" : ` or ${cap.maxFiles} files`} for one run`;
+/**
+ * What the minter hears on an execution whose download the host refused over its file caps
+ * (`ExecutionEvidence.fileCap`): which cap, that no change to the source gets the file past it,
+ * and that ending host_refused is preferred over asking the owner to narrow the request.
+ */
+const fileCapInstruction = (cap: DownloadCap) =>
+  cap.limit === "file"
+    ? `The host refused this download: it is over ${capWords(cap)}, and no change to the source gets it under that cap. When the request needs this file, prefer report_blocked with reason host_refused, naming the cap in explanation, over asking the owner to narrow the request.`
+    : `The host refused this download: it would take this run's files over ${capWords(cap)}, and only a run that collects fewer or smaller files fits under it. When the request needs these files in one run, prefer report_blocked with reason host_refused, naming the cap in explanation, over asking the owner to narrow the request.`;
+
 /** Copy known receipt fields without invoking an optional hostile accessor. */
 const safeExecutionEvidence = (evidence: ExecutionEvidence): ExecutionEvidence => {
   const siteAccess = siteAccessDiagnostic(evidence);
@@ -836,6 +856,13 @@ const safeExecutionEvidence = (evidence: ExecutionEvidence): ExecutionEvidence =
       onNone: () => ({}),
       onSome: (refusal) => ({ refusal }),
     }),
+    // Only a failed execution's download refusal is a cap the build cannot get past.
+    ...(evidence.status === "failed"
+      ? Option.match(Schema.decodeUnknownOption(DownloadCap)(evidence.fileCap), {
+          onNone: () => ({}),
+          onSome: (fileCap) => ({ fileCap }),
+        })
+      : {}),
   };
 };
 
@@ -2041,9 +2068,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               ? { outcome: "unanswered" as const }
               : evidence.scriptQuestion;
           const pathLeft = purpose === "act" ? evidence.writePathRemaining : undefined;
+          const fileCap = safeExecutionEvidence(evidence).fileCap;
           return JSON.stringify({
             ...receipt,
             ...(withheld === undefined ? {} : { instruction: withheldConfirmationInstruction }),
+            ...(fileCap === undefined
+              ? {}
+              : { fileCap: { ...fileCap, instruction: fileCapInstruction(fileCap) } }),
             ...(pathLeft === undefined || pathLeft.length === 0
               ? {}
               : { writePath: writePathNotice(pathLeft, evidence.confirmation !== undefined) }),
@@ -2112,6 +2143,18 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       ) =>
         Effect.gen(function* () {
           record(evidence, purpose);
+          // A download over the host's own file caps is a host check's refusal no change to the
+          // source gets past: a host_refused report stands on it, and the blocked explanation's
+          // review reads it in the ledger.
+          const fileCap = safeExecutionEvidence(evidence).fileCap;
+          if (fileCap !== undefined) {
+            refuseByHost({ source: "file_cap", ...fileCap });
+            yield* recordHostRefusal(
+              "execute",
+              fileCap.limit === "file" ? "too_large" : "run_limit",
+              `The host refused a download over ${capWords(fileCap)}.`,
+            );
+          }
           const handedBack = evidence.noResponse !== undefined && handsBackNoAnswer();
           if (handedBack) yield* questionHandedBack();
           const receipt = yield* visible(evidence, purpose, handedBack);
