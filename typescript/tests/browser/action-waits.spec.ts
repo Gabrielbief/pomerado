@@ -234,6 +234,24 @@ test.describe("outcome race after an action", () => {
     expect((answer.evidence?.["fields"] as { field: string }[]).map(({ field }) => field)).toEqual(["Email"]);
   });
 
+  test("a hidden input labelled with its drop-down's own name is an invalid outcome under that name", async ({
+    page,
+  }) => {
+    await site(page, {
+      "/": `<form id="record" aria-label="Edit record" action="/api/records" method="post">
+          <div data-input-type="select">
+            <span id="colour-label">Colour</span>
+            <input role="combobox" aria-labelledby="colour-label" aria-expanded="false" readonly>
+            <input aria-labelledby="colour-label" name="colour" required tabindex="-1" style="display:none">
+          </div>
+          <button id="save">Save</button>
+        </form>`,
+    });
+    const answer = await race(page, `${saveOutcomes} sent: { response: { method: "POST", url: "/api/records" } },`);
+    expect(answer).toMatchObject({ outcome: "invalid", kind: "invalid" });
+    expect((answer.evidence?.["fields"] as { field: string }[]).map(({ field }) => field)).toEqual(["Colour"]);
+  });
+
   test("a hidden required input the browser flags in a form it doesn't check is no invalid outcome of a save", async ({
     page,
   }) => {

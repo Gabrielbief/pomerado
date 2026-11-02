@@ -1,3 +1,5 @@
+import { fieldName } from "./field-name.js";
+
 /**
  * The kinds of answer `waitForOutcome` and `waitForOutcomeResult` race beside plain locators, and
  * `waitForReady`, the wait before acting on a control. `waitCode` (./wait.ts) pastes both; this
@@ -332,9 +334,10 @@ const outcomeWaitTextMatches = (matcher, text) => {
 // Runs in the page: every control under the roots the site marked invalid, with its label and its
 // message. A control is invalid when it has aria-invalid="true", the is-invalid class, or fails the
 // browser's own validation after the person tried to submit (:user-invalid). One hidden behind a
-// styled control counts when its label shows. A hidden one with no label of its own, such as a
-// custom drop-down's validation input beside its visible box, counts under the one shown field
-// it belongs to, as the form helpers read it.
+// styled control counts when its label shows. A hidden one with no label of its own, or only its
+// field's, such as a custom drop-down's validation input beside its visible box, counts under the
+// one shown field it belongs to, as the form helpers read it; in a novalidate form, only when the
+// page flagged it.
 const outcomeWaitInvalidInPage = (roots) => {
   const marks = '[aria-invalid="true"], .is-invalid' +
     (globalThis.CSS?.supports?.("selector(:user-invalid)") ? ", :user-invalid" : "");
@@ -369,22 +372,24 @@ const outcomeWaitInvalidInPage = (roots) => {
       each !== hidden && shows(each) && each.getAttribute("aria-hidden") !== "true");
     return shown.filter((each) => !shown.some((other) => other !== each && other.contains(each)));
   };
+  // A field's name as the form helpers read it, for a hidden control named as its field.
+  const nameOf = ${String(fieldName)};
   // The one shown field a hidden select, text area or input (not a box to tick, a button to choose
-  // or a file to attach) with no label of its own stands in for: the nearest element around it
-  // holding any shown field holds only that one, and one of that field's wrappers, holding no
-  // other shown field, holds the hidden control: its select container, its group, or the nearest
-  // element holding it and its label.
+  // or a file to attach) with no label of its own, or only the field's, stands in for: the
+  // nearest element around it holding any shown field holds only that one, and one of that
+  // field's wrappers, holding no other shown field, holds the hidden control: its select
+  // container, its group, or the nearest element holding it and its label.
   const ownerOf = (hidden) => {
     const kind = hidden instanceof HTMLSelectElement || hidden instanceof HTMLTextAreaElement ||
       (hidden instanceof HTMLInputElement && !["checkbox", "radio", "file"].includes(hidden.type));
-    const labelled = (hidden.labels?.length ?? 0) > 0 || hidden.closest("label") !== null ||
-      hidden.hasAttribute("aria-label") || hidden.hasAttribute("aria-labelledby");
-    if (!kind || labelled) return null;
+    if (!kind) return null;
+    const own = nameOf(hidden);
     for (let node = hidden.parentElement; node !== null; node = node.parentElement) {
       const near = shownFields(node, hidden);
       if (near.length === 0) continue;
       if (near.length > 1) return null;
       const [field] = near;
+      if (own !== "" && own !== nameOf(field)) return null;
       const named = [...(field.labels ?? []),
         ...String(field.getAttribute("aria-labelledby") ?? "").split(/\s+/).filter(Boolean).map((id) => document.getElementById(id))]
         .filter(Boolean);

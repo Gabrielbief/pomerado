@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import { foldChoiceText } from "../runtime/text.js";
 import { typeKeys, typingPauses } from "../runtime/typing-pace.js";
+import { fieldName } from "./field-name.js";
 
 /**
  * The shape of a form control, as the page code reads it: a native date input, a text box, a
@@ -448,23 +449,7 @@ const formControlRequiredFields = async (scope, timeout, mode = "required") => {
     const spaced = (text) => words(String(text ?? "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_\-.[\]]+/g, " "));
     const flagMarks = '[aria-invalid="true"], .is-invalid' +
       (globalThis.CSS?.supports?.("selector(:user-invalid)") ? ", :user-invalid" : "");
-    // A wrapping label holds the control itself, whose value or options are not its name.
-    const labelText = (label) => {
-      const copy = label.cloneNode(true);
-      copy.querySelectorAll("input, select, textarea, [role=listbox], [role=combobox], [role=option]").forEach((inner) => inner.remove());
-      return words(copy.textContent);
-    };
-    const nameOf = (element) => {
-      const labels = Array.from(element.labels ?? []);
-      const byFor = labels.find((label) => !label.contains(element));
-      if (byFor) return labelText(byFor);
-      const wrapping = element.closest("label");
-      if (wrapping) return labelText(wrapping);
-      const ids = (element.getAttribute("aria-labelledby") ?? "").split(/\s+/).filter(Boolean);
-      const named = ids.map((id) => element.ownerDocument.getElementById(id)).filter(Boolean);
-      if (named.length > 0) return words(named.map((node) => node.textContent).join(" "));
-      return words(element.getAttribute("aria-label"));
-    };
+    const nameOf = ${String(fieldName)};
     const isEmpty = (element) => {
       if (element instanceof HTMLInputElement) {
         if (element.type === "checkbox") return !element.checked;
