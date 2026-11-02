@@ -220,16 +220,16 @@ During the session:
   the same fields: two read paths, such as a list's row and the record's own detail view, can
   return the same unchanged field in different shapes, and a comparison across them then
   reports a change that never happened.
-- When a write creates something, such as an application, order, request or draft, and the
-  request does not ask to continue or update one, prefer making a new one on each call, even
-  when the account already holds an unfinished one, such as one an earlier call left, since a
-  caller may want several. Continue an unfinished one only when the site refuses a new one, and
-  say in the output whether the call made a new one or continued one.
-- Continuing an unfinished one is still this call's create, not a change to state that already
-  exists: fill each field its pages offer from this call's input, set each field this call
-  leaves empty to what a new one starts with (blank or the site's default) rather than the
-  value the draft holds, and compare the read-back against this call's values alone, with no
-  before-and-after comparison, so nothing an earlier call saved stays or shows in
+- When a write creates something, such as an application, claim or draft, outside a cart (cart
+  skill), and the request does not ask to continue or update one, prefer making a new one on
+  each run, even when the account already holds an unfinished one, such as one an earlier run
+  left, since a caller may want several. Continue an unfinished one only when the site refuses
+  a new one, and, in a tool that can continue one, say in the output which it did.
+- Continuing an unfinished one is still this run's create, not a change to state that already
+  exists: fill each field its pages offer from this run's input, set each field this run leaves
+  empty to what a new one starts with (blank or the site's default) rather than the value the
+  draft holds, and compare the read-back against this run's values alone, with no
+  before-and-after comparison, so nothing an earlier run saved stays or shows in
   `saved_differences`.
 - If a step meets an option the input does not settle, stop that step before choosing
   it and ask, in one round for the whole page once every value the input and earlier answers supply on it is filled (forms skill). A `request_input` question during the session waits in place; a choice
