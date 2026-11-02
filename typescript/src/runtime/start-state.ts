@@ -1,5 +1,6 @@
 import { Effect, Schema } from "effect";
 import { urlSpans } from "../privacy/url-spans.js";
+import { closedTargetMessage } from "./closed-target.js";
 import { primaryPageCode, type HostExecute } from "./host-execute.js";
 import { hostOnSiteSource, siteOf } from "./same-site.js";
 
@@ -258,7 +259,7 @@ const failureKind = (message: string): EntryNavigationFailureKind => {
   if (/net::ERR_(CERT_|SSL_)/u.test(message)) return "tls";
   if (/net::ERR_BLOCKED_BY_(CLIENT|RESPONSE|ADMINISTRATOR)/u.test(message)) return "blocked";
   if (/net::ERR_ABORTED/u.test(message)) return "aborted";
-  if (/has been closed|Target closed|Browser closed/u.test(message)) return "closed";
+  if (closedTargetMessage.test(message)) return "closed";
   return "other";
 };
 

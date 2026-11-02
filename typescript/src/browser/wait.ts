@@ -1,3 +1,4 @@
+import { closedTargetMessage } from "../runtime/closed-target.js";
 import { timeoutDefaults } from "../runtime/deadline.js";
 import { outcomeKindsCode, readyWaitCode } from "./action-waits.js";
 
@@ -105,8 +106,14 @@ const waitBounded = (promise, ms, fallback = undefined) => {
   ]).finally(() => clearTimeout(timer));
 };
 const waitSeconds = (ms) => (Math.max(0, ms) / 1000).toFixed(1) + " s";
-const waitContextLost = (error) =>
-  /Execution context was destroyed|Frame was detached/.test(String(error?.message));
+// A read the page cut short by replacing or removing what it read, so the next look reads again.
+// A cross-site frame runs as a target of its own, and one that goes away reports a closed target:
+// while the call's page is open, that was a frame of it, not the page, its context or its browser.
+const waitContextLost = (error) => {
+  const message = String(error?.message);
+  return /Execution context was destroyed|Frame was detached/.test(message) ||
+    (${String(closedTargetMessage)}.test(message) && !page.isClosed());
+};
 // Generic loading signs. A busy region or an indeterminate progress bar says the page is loading;
 // a determinate bar (one with a value) is a rating, a step or a meter. A class that names a
 // skeleton, shimmer, spinner or loader is only a hint, and never on a form control.
@@ -542,7 +549,8 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
     cleanupMs = () => Math.min(250, beforeStop());
     const unchangedMs = options.unchangedMs ?? waitLimits.unchanged;
     const unchangedFrom = begun + unchangedMs;
-    // A page or frame the action is replacing can drop a look midway; the next look sees the new one.
+    // A page or frame the action is replacing or removing can drop a look midway; the next look
+    // reads the page again.
     // The page cannot always be read: a native dialog stops its scripts, and while a navigation
     // is pending Playwright cannot evaluate in it. A look the page holds up ends at the deadline
     // (with outcomeWaitLateMs of grace, so a look begun just before it finishes), at once for a dialog,
