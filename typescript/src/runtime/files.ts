@@ -131,6 +131,20 @@ export const defaultFileLimits: FileLimits = {
 };
 
 /**
+ * A download the host refused over its own caps, with the cap it went over: one file over the
+ * per-file cap (`file`, refused `too_large`), or the run's files over its caps (`run`, refused
+ * `run_limit`), counting the caller's files the run placed and the downloads it collected, with
+ * the most files a run may hold. The page made the file, so it is the host's limit, never the
+ * caller's input, and no change to the script's source makes that same file smaller.
+ */
+export const DownloadCap = Schema.Struct({
+  limit: Schema.Literal("file", "run"),
+  maxBytes: Schema.NonNegativeInt,
+  maxFiles: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
+});
+export type DownloadCap = typeof DownloadCap.Type;
+
+/**
  * Why the host refused a file. Never names the file's contents.
  *
  * - `unknown_reference`: the reference is not one of this run's files.
