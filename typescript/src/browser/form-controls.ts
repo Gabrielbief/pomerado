@@ -109,13 +109,15 @@ export const blockingFieldsHook = "__pomeradoBlockingFields";
  *   is visible, enabled, empty and marked `required` or `aria-required="true"`, or flagged invalid
  *   (`aria-invalid="true"`, the `is-invalid` class or the browser's own check after a submit). A
  *   control inside another one, such as a combobox's own text box, counts as that one, with its
- *   required mark, flag and value. So does a hidden required control with no label of its own,
- *   not displayed or `aria-hidden="true"`, such as a custom drop-down's validation input beside
- *   its visible box, inside a wrapper of a visible field (its closest `[data-input-type=select]`
- *   or `[role=group]`, or the nearest element holding it and its label), when the nearest
- *   element around the hidden control that holds any visible field holds only that one: the
- *   field is required, flagged when the hidden control is and empty while it is, and the visible
- *   box is what gets filled. A hidden control that belongs to no one field counts as before.
+ *   required mark, flag and value. So does a hidden required select, text area or input, other
+ *   than a checkbox, radio button or file input, with no label of its own, not displayed or
+ *   `aria-hidden="true"`, such as a custom drop-down's validation input beside its visible box,
+ *   inside a wrapper of a visible field (its closest `[data-input-type=select]` or
+ *   `[role=group]`, or the nearest element holding it and its label, each holding no other
+ *   visible field), when the nearest element around the hidden control that holds any visible
+ *   field holds only that one: the field is required, flagged when the hidden control is and
+ *   empty while it is, and the visible box is what gets filled. A hidden control that belongs to
+ *   no one field counts as before.
  *   Each is `{ label, shape, options? }`, its label from its
  *   `<label for>`, a wrapping label, `aria-labelledby` or `aria-label`. A text box, select or
  *   combobox with a label is supported, and a select or combobox listing 1 to 50 options now
@@ -419,9 +421,10 @@ const formControlTextTypes = new Set(["", "text", "email", "tel", "url", "number
  * browser's own check after a submit), each with its label, its supported shape or unsupported, a
  * select's or combobox's options when it lists 1 to 50 now, whether the page flagged it, and its
  * control. A control inside another one, such as a combobox's own text box, is that one, and
- * its required mark, flag and value count as that one's. A hidden required control with no label
- * of its own that belongs to one visible field, by that field's wrappers, stands in for it: its
- * required mark, flag and value count as that field's, and it is never a field itself. Mode
+ * its required mark, flag and value count as that one's. A hidden required control, no box to
+ * tick or file input, with no label of its own that belongs to one visible field, by that field's
+ * wrappers, stands in for it: its required mark, flag and value count as that field's, and it is
+ * never a field itself. Mode
  * "flagged" keeps only the flagged ones, each with its keys (its label and every name and id it
  * and its inner controls carry), and counts the flagged controls that are not empty; mode
  * "labels" returns the keys of every visible control instead, and mode "enabled labels" those of
@@ -505,15 +508,17 @@ const formControlRequiredFields = async (scope, timeout, mode = "required") => {
     if (mode === "labels" || mode === "enabled labels")
       return { labels: outer.filter((element) => shown(element) && (mode === "labels" || enabledOf(element))).flatMap(keysOf) };
     // A hidden control the browser checks as required, such as a custom drop-down's validation
-    // input beside its visible box, may stand in for that box.
+    // input beside its visible box, may stand in for that box. A box to tick, a button to choose
+    // or a file to attach is a field of its own.
     const standsIn = (element) =>
-      (element instanceof HTMLInputElement || element instanceof HTMLSelectElement ||
-        element instanceof HTMLTextAreaElement) &&
+      (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement ||
+        (element instanceof HTMLInputElement && !["checkbox", "radio", "file"].includes(element.type))) &&
       element.required && element.willValidate &&
       (!shown(element) || element.getAttribute("aria-hidden") === "true");
     const visibleFields = outer.filter((element) => shown(element) && !standsIn(element));
     // A field's wrappers: its select container, its group, and the nearest element holding it and
-    // its label.
+    // its label, each only while it holds no other visible field, as one holding a label far away
+    // can.
     const wrappersOf = (element) => {
       const ids = (element.getAttribute("aria-labelledby") ?? "").split(/\s+/).filter(Boolean);
       const labels = [
@@ -526,7 +531,8 @@ const formControlRequiredFields = async (scope, timeout, mode = "required") => {
         return node;
       });
       return [element.closest("[data-input-type=select]"), element.closest("[role=group]"), ...holding]
-        .filter(Boolean);
+        .filter((wrapper) =>
+          wrapper !== null && visibleFields.every((other) => other === element || !wrapper.contains(other)));
     };
     // The one visible field a stand-in belongs to: the nearest element above it holding a visible
     // field holds only that one, one of its wrappers holds the stand-in, and the stand-in has no

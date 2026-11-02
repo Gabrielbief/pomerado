@@ -266,7 +266,7 @@ const clickPlace = async ({ kernel, sessionId, errors }: Context, checkedTotal: 
       // The fields the review shows just before the click: one of them flagged after it proves nothing.
       const before = await visibleFieldLabels(review);
       // The confirmation, or the review again with a field the site or the browser's own check
-      // flagged, each with its message. Anything else fails the wait.
+      // flagged, each with its message in the answer's evidence. Anything else fails the wait.
       const confirmation = page.getByRole("status", { name: "Order confirmation", exact: true });
       const answer = await waitForOutcomeResult(
         { placed: confirmation, flagged: { invalid: review } },
