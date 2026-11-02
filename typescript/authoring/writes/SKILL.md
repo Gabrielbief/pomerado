@@ -313,12 +313,13 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   words, preferably as a declared refusal (below): the run then reports the write not applied.
   Wait for that answer in the commit call, beside the confirmation. A 5xx, a timeout, a conflict or
   duplicate answer, or an error inside a returned record is not that proof. A save the site
-  answers with the same form again, showing its own validation summary or field errors and no
-  next page or confirmation, is that proof too, unless `blockingRequiredFields` returns fields to
-  ask (above): call `notCommitted` for that step with `{ siteRefused: true }`. Then prefer
-  throwing `InvalidInput` with the site's words when a flagged field holds the caller's own value,
-  since the caller can fix it, and `OperationFailure` otherwise, since the tool filled or left
-  that field wrong.
+  answers with the same form again, still holding the values the step filled, showing its own
+  validation summary or field errors, none of them a conflict or duplicate, and no next page or
+  confirmation, is that proof too, unless `blockingRequiredFields` returns fields to ask or
+  `unaskable` (above): call `notCommitted` for that step with `{ siteRefused: true }`. Then prefer
+  throwing `InvalidInput` with the site's words when every field it flags holds the caller's own
+  value, since the caller can fix it, and `OperationFailure` with the site's words otherwise,
+  since the tool filled or left one of them wrong.
 - A quote the site issued earlier, such as a fare, rate, cart price or hold, can expire before
   the commit, for example while the step waits for review. Prefer having the commit step reload
   or re-select it right before its mark, so the site issues a fresh one, and check that one

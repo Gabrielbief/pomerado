@@ -1163,7 +1163,7 @@ it("has a write retry an expired quote once, which Guardian's reviews accept", a
     "Nor is it when the site's own answer to the first click refused it as a whole and showed nothing was created, such as a quote that expired or a price that changed, and the step called notCommitted for that step once, refreshed the quote and checked it against the caller's limits before entering it again for one more click.",
   );
   expect(guardianPublicationPolicy).toContain(
-    "Nor is a `notCommitted` for a step right after the site's own answer to its click refused it as a whole and showed nothing was created, such as a commit response reporting an expired quote and no record, followed by a refusal with the site's words, or by one refresh, a check of the fresh quote against the caller's limits and one more entered click.",
+    "Nor is a `notCommitted` for a step right after the site's own answer to its click refused it as a whole and showed nothing was created, such as a commit response reporting an expired quote and no record, followed by a refusal, or an `OperationFailure`, with the site's words, or by one refresh, a check of the fresh quote against the caller's limits and one more entered click.",
   );
 });
 
@@ -1301,7 +1301,7 @@ it("renders the pinned standalone authoring", async () => {
     ["892ed73535d99bbd6a0b54f9351d8f0995267956de380f3cff59bb3f6c0d7213", "testing"],
     ["2b559ad88157f28be2a054787f4c736cf192bb825760bdf3050c01a59d060ba8", "pagination"],
     ["1b89b515528cd734f3abd073596b7cc914f3e0dcffcb2d26ce22d23589896e64", "forms"],
-    ["293635963a721c1e7074243c4322a921244243ee500f2e3a673597820450cb55", "writes"],
+    ["3a0383c9ba5e71d816ba97d1ec6ebdf19d17f0b33dc7541b4e80ceb4b3b757e8", "writes"],
     ["bdcb2ec20d9528b12017e73e8fd6cf1c2545fd411eb6e79dac1f7e74580c35c6", "cart"],
     ["b6dd72d69c30ac9a1818ac1baeae48e701cd318f04d11e04ef8c03d812b91a16", "caller-input"],
     ["e131af44ac8855cf62dab272f2b9c4acad8917d7e488390556dcc8e1e90fee3e", "publication"],
