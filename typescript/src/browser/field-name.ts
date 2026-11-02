@@ -2,7 +2,7 @@
  * A form control's name as the required-field helpers read it: the text of its `<label for>`,
  * else of the label wrapping it without the controls inside, else of its `aria-labelledby`
  * elements, else its `aria-label`, with spacing and zero-width spaces folded. Self-contained: page
- * code pastes it from its own source, so the helpers and the `invalid` outcome name a field alike.
+ * code pastes it from its own source.
  */
 export const fieldName = (element: Element): string => {
   const words = (text: string | null | undefined) => String(text ?? "").replace(/[\s​]+/g, " ").trim();
