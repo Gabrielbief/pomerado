@@ -143,6 +143,9 @@ first:
     failure");
   - every applied filter or option is read back from the page as the value the site applied,
     such as the chosen option's label, never `true` ("Applied without readback");
+  - a value chosen in a typeahead, combobox, dropdown, chip input or lookup dialog goes through
+    `pickValue` or `pickValues` (forms skill); review sends back a picker of the tool's own unless
+    `pickValue` failed on that control and the code says what the page showed ("Own picker");
   - a requested value the site does not offer throws `InvalidInput` with the site's choices, and
     one the page ignored throws `InputNotApplied` unless it tailors the answer (core skill) or is
     a search query the site corrected, returned with `applied_query` and `query_corrected` (search
