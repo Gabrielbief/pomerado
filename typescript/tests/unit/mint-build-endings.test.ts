@@ -577,6 +577,7 @@ it.each([
     expect(resultOf(f.requests[1], "example")).toMatchObject({
       fileCap: { ...cap, instruction: expect.stringContaining("host_refused") },
     });
+    expect(JSON.stringify(resultOf(f.requests[1], "example"))).toContain(`${cap.maxBytes} bytes`);
   },
 );
 

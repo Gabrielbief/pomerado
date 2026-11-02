@@ -814,8 +814,8 @@ const capSize = (bytes: number) =>
 /** The host's file cap a download went over, as words. */
 const capWords = (cap: DownloadCap) =>
   cap.limit === "file"
-    ? `the host's cap of ${capSize(cap.maxBytes)} for one file`
-    : `the host's cap of ${capSize(cap.maxBytes)}${cap.maxFiles === undefined ? "" : ` or ${cap.maxFiles} files`} for one run`;
+    ? `cap of ${capSize(cap.maxBytes)} for one file`
+    : `cap of ${capSize(cap.maxBytes)}${cap.maxFiles === undefined ? "" : ` or ${cap.maxFiles} files`} for one run`;
 /**
  * What the minter hears on an execution whose download the host refused over its file caps
  * (`ExecutionEvidence.fileCap`): which cap, that no change to the source gets the file past it,
@@ -823,8 +823,8 @@ const capWords = (cap: DownloadCap) =>
  */
 const fileCapInstruction = (cap: DownloadCap) =>
   cap.limit === "file"
-    ? `The host refused this download: it is over ${capWords(cap)}, and no change to the source gets it under that cap. When the request needs this file, prefer report_blocked with reason host_refused, naming the cap in explanation, over asking the owner to narrow the request.`
-    : `The host refused this download: it would take this run's files over ${capWords(cap)}, and only a run that collects fewer or smaller files fits under it. When the request needs these files in one run, prefer report_blocked with reason host_refused, naming the cap in explanation, over asking the owner to narrow the request.`;
+    ? `The host refused this download: it is over the host's ${capWords(cap)}, and no change to the source gets it under that cap. When the request needs this file, prefer report_blocked with reason host_refused, naming the cap in explanation, over asking the owner to narrow the request.`
+    : `The host refused this download: it would take this run's files over the host's ${capWords(cap)}, and only a run that collects fewer or smaller files fits under it. When the request needs these files in one run, prefer report_blocked with reason host_refused, naming the cap in explanation, over asking the owner to narrow the request.`;
 
 /** Copy known receipt fields without invoking an optional hostile accessor. */
 const safeExecutionEvidence = (evidence: ExecutionEvidence): ExecutionEvidence => {
@@ -2152,7 +2152,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             yield* recordHostRefusal(
               "execute",
               fileCap.limit === "file" ? "too_large" : "run_limit",
-              `The host refused a download over ${capWords(fileCap)}.`,
+              `The host refused a download over its ${capWords(fileCap)}.`,
             );
           }
           const handedBack = evidence.noResponse !== undefined && handsBackNoAnswer();
