@@ -152,7 +152,8 @@ with `waitForOutcome({ popup }, { action: () => field.click({ timeout: 5000 }) }
 call, so a popup that never opens fails in seconds; then wait the same way, without an
 action, for the exact option within that popup. A zero count directly
 after a click does not establish absence. Inspect the post-action accessibility
-snapshot before changing the selector or attempting another action.
+snapshot before changing the selector or attempting another action. Close a popup you opened
+as the core skill's pop-up rule says.
 
 A typed query plus a visible listbox can still show the previous response. `pickValue`
 waits for the list to settle and types again when it lacks the value; when the site marks
