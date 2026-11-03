@@ -153,13 +153,13 @@ field.addEventListener("input", () => { if (field.value.replace(/\\D/g, "") !== 
  * A calendar picker's date box that shows typed text at once but takes a date only on Enter or
  * once focus leaves it: it then keeps the date in a hidden input and names it in its calendar
  * button's label. Until then the page keeps the old date. `revert` puts the old text back once
- * focus leaves, and `enter` takes a date on Enter alone. A submit is counted, never sent.
+ * focus leaves, and `enter` takes a date on Enter alone. Every key pressed in the box is counted.
  */
 const calendarPicker = (mode: "commit" | "revert" | "enter" = "commit") => `<form>
 <label>Start date<input name="start-text" aria-haspopup="dialog" value="10/01/2026"></label>
 <input type="hidden" name="start" value="2026-10-01">
 <button type="button" aria-label="Choose date, selected date is Oct 1, 2026">Calendar</button>
-<output id="submits">0</output></form>
+<output id="keys">0</output></form>
 <script>
 (() => {
 const form = document.forms[0];
@@ -177,12 +177,12 @@ const take = () => {
   button.setAttribute("aria-label", "Choose date, selected date is " + named.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }));
 };
 box.addEventListener("keydown", (event) => {
+  document.querySelector("#keys").textContent++;
   if (event.key !== "Enter") return;
   event.preventDefault();
   if (mode !== "revert") take();
 });
 box.addEventListener("blur", () => { if (mode !== "enter") take(); });
-form.addEventListener("submit", (event) => { event.preventDefault(); document.querySelector("#submits").textContent++; });
 })();
 </script>`;
 
@@ -196,11 +196,11 @@ test("fillDate with no commit options presses no key and leaves the box focused,
       `return await fillDate(page.getByLabel("Start date"), "2026-11-14", "MM/DD/YYYY");`,
     ),
   ).toEqual({ result: { shape: "text" } });
-  // The box shows the typed date while the picker keeps the old one: nothing pressed Enter or left
-  // the box, and nothing was submitted.
+  // The box shows the typed date while the picker keeps the old one: no key was pressed in the box
+  // and focus never left it.
   expect(await submitted(page)).toEqual({ "start-text": "11/14/2026", start: "2026-10-01" });
   expect(await page.evaluate(() => document.activeElement?.getAttribute("name"))).toBe("start-text");
-  await expect(page.locator("#submits")).toHaveText("0");
+  await expect(page.locator("#keys")).toHaveText("0");
 });
 
 test("fillDate commits a typed date in a calendar picker with Enter and Tab, and reads its label back", async ({
@@ -217,7 +217,8 @@ test("fillDate commits a typed date in a calendar picker with Enter and Tab, and
   );
   expect(filled).toEqual({ result: { shape: "text" } });
   expect(await submitted(page)).toEqual({ "start-text": "11/14/2026", start: "2026-11-14" });
-  await expect(page.locator("#submits")).toHaveText("0");
+  // Enter, then Tab.
+  await expect(page.locator("#keys")).toHaveText("2");
   // `committed` may be a function of the date instead, such as one reading the picker's own value.
   const again = await call(
     page,
@@ -266,25 +267,55 @@ test("fillDate fails not_committed when a picker drops the typed date or never t
   ).toEqual({ error: "not_committed" });
 });
 
-test("fillDate blurs a native date input when asked and reads back what the page kept", async ({
-  page,
-}) => {
-  await page.setContent(`<form><label>Start date<input type="date" name="start-box"></label>
+for (const blur of ["tab", "blur"] as const)
+  test(`fillDate leaves a native date input with blur "${blur}" and reads back what the page kept`, async ({
+    page,
+  }) => {
+    // Tab moves between a native date input's own parts, so the input keeps focus after one press.
+    await page.setContent(`<form><label>Start date<input type="date" name="start-box"></label>
 <input type="hidden" name="start"></form>
 <script>
 const box = document.querySelector("[type=date]");
 box.addEventListener("blur", () => { document.querySelector("[name=start]").value = box.value; });
 </script>`);
-  const filled = await call(
-    page,
-    `return await fillDate(page.getByLabel("Start date"), "2026-11-14", "MM/DD/YYYY", {
-  blur: "blur",
+    const filled = await call(
+      page,
+      `return await fillDate(page.getByLabel("Start date"), "2026-11-14", "MM/DD/YYYY", {
+  blur: ${JSON.stringify(blur)},
   committed: page.locator("[name=start]"),
+  timeout: 2000,
 });`,
-  );
-  expect(filled).toEqual({ result: { shape: "date" } });
-  expect(await submitted(page)).toEqual({ "start-box": "2026-11-14", start: "2026-11-14" });
-});
+    );
+    expect(filled).toEqual({ result: { shape: "date" } });
+    expect(await submitted(page)).toEqual({ "start-box": "2026-11-14", start: "2026-11-14" });
+  });
+
+// A box that holds only part of a date, or a format that writes no year, matches a committed
+// label only by the whole date, never by its own text found in an older date or a time. A format
+// that writes the whole date also matches as typed.
+for (const [label, format, old, fresh] of [
+  ["Year", "YYYY", "Oct 1, 2026", "Nov 14, 2026"],
+  ["Month", "MM", "Oct 11, 2026", "2026-11-14"],
+  ["Day and month", "MM/DD", "Oct 1, 2026, 11:14 AM", "14 November 2026"],
+  ["Start date", "MM/DD/YYYY", "Oct 1, 2026", "11/14/2026"],
+] as const)
+  test(`fillDate never reads a committed label's ${old} as ${format} of a new date`, async ({
+    page,
+  }) => {
+    await page.setContent(`<form><label>${label}<input name="part"></label>
+<button type="button" aria-label="Choose date, selected date is ${old}">Calendar</button></form>`);
+    const fill = `return await fillDate(page.getByLabel(${JSON.stringify(label)}), "2026-11-14", ${JSON.stringify(format)}, {
+  blur: "tab",
+  committed: page.getByRole("button", { name: /^Choose date/ }),
+  timeout: 1000,
+});`;
+    expect(await call(page, fill)).toEqual({ error: "not_committed" });
+    // Once the label names the new date, the same call takes it.
+    await page
+      .getByRole("button")
+      .evaluate((button, fresh) => button.setAttribute("aria-label", "Choose date, selected date is " + fresh), fresh);
+    expect(await call(page, fill)).toEqual({ result: { shape: "text" } });
+  });
 
 test("fillDate fills split month, day and year text boxes", async ({ page }) => {
   await page.setContent(`<form><fieldset><legend>Date of birth</legend>

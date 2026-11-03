@@ -100,14 +100,17 @@ export const blockingFieldsHook = "__pomeradoBlockingFields";
  *   A box that shows the date has not always been taken by the page, as in a calendar picker that
  *   takes a typed date only on Enter or once focus leaves. For a text box or a native date input,
  *   once it shows the date, `commit: "keyboard"` presses Enter and then `blur: "tab"` presses Tab
- *   or `blur: "blur"` blurs the box. Both are `"none"` by default, since Enter in a plain form can
- *   submit it. Then the box must still show the date, and `committed`, when given, must show it
- *   too: a locator whose text, `aria-label` or value shows the date as typed, as ISO or with the
- *   month's name in the page's language (`MMM D, YYYY`, `D MMMM YYYY` and the like), such as the
- *   picker's own "selected date is ..." button, or a function of `{ iso, text }` (`text` as typed)
- *   that returns true once the page took the date. When they still don't by the timeout, it
- *   throws `not_committed`. With none of the three, it returns as soon as the box shows the date.
- *   A split date's select or custom dropdown takes none of them: choosing its option commits it.
+ *   or `blur: "blur"` blurs the box. A native date input that Tab leaves focused, as Tab moves
+ *   between its own parts, is then blurred. Both are `"none"` by default, since Enter in a plain
+ *   form can submit it. Then the box must still show the date, and `committed`, when given, must
+ *   show it too: a locator whose text, `aria-label` or value shows the whole date, as ISO
+ *   (`2026-11-14`), with the month's name in the page's language (`MMM D, YYYY`, `D MMMM YYYY` and
+ *   the like) or, when `format` writes the year, month and day, as typed, such as the picker's own
+ *   "selected date is ..." button; or a function of `{ iso, text }` (`text` as typed) that returns
+ *   true once the page took the date. For one part of a split date, `committed` still shows the
+ *   whole date. When they still don't by the timeout, it throws `not_committed`. With none of the
+ *   three, it returns as soon as the box shows the date. A split date's select or custom dropdown
+ *   takes none of them: choosing its option commits it.
  * - `chooseOption(control, wanted, { timeout }?)`: chooses the one option of a native select or a
  *   custom dropdown whose label or value is one of `wanted` (a string or a list of alternate
  *   spellings, such as `["CA", "California"]`), ignoring case, accents, spacing and punctuation.
@@ -394,14 +397,24 @@ const chooseOption = async (control, wanted, options = {}) => {
 /** Letters and digits only: an input mask adds or drops separators, never the date itself. */
 const formControlSameText = (shown, expected) =>
   formControlText(shown).replace(/[^\p{L}\p{N}]/gu, "") === formControlText(expected).replace(/[^\p{L}\p{N}]/gu, "");
+/** Whether a format writes the whole date, its year, month and day, so its text alone names the date. */
+const formControlWholeDate = (format) => {
+  const kinds = new Set((String(format).match(/YYYY|YY|MMMM|MMM|MM|M|DD|D/g) ?? []).map((token) => token[0]));
+  return kinds.has("Y") && kinds.has("M") && kinds.has("D");
+};
 /**
- * Whether text shows the date, as whole words of it: as typed, as ISO, or with the month's name in
- * the page's language, such as "Nov 14, 2026" or "14 November 2026".
+ * Whether text shows the date: as the ISO date itself, between non-digits; as whole words of it
+ * with the month's name in the page's language, such as "Nov 14, 2026" or "14 November 2026"; or
+ * as typed, only when the format writes the whole date. Text typed for part of a date, such as a
+ * year or "11/14", can be part of another date or a time, and so can ISO's digits read as words.
  */
 const formControlShowsDate = (shown, date) => {
+  for (let at = shown.indexOf(date.iso); at !== -1; at = shown.indexOf(date.iso, at + 1))
+    if (!/\d/.test(shown[at - 1] ?? "") && !/\d/.test(shown[at + date.iso.length] ?? "")) return true;
   const phrase = (text) => " " + formControlText(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean).join(" ") + " ";
   const named = ["MMMM D YYYY", "MMM D YYYY", "D MMMM YYYY", "D MMM YYYY"].map((form) => formatDate(date.iso, form, date.locale));
-  return [date.text, date.iso, ...named].some((form) => phrase(form).trim() !== "" && phrase(shown).includes(phrase(form)));
+  const forms = [...(date.whole ? [date.text] : []), ...named];
+  return forms.some((form) => phrase(form).trim() !== "" && phrase(shown).includes(phrase(form)));
 };
 /** What a committed locator shows: a box's value, a select's choice, or an element's text and label. */
 const formControlCommittedText = (committed, timeout) =>
@@ -416,10 +429,11 @@ const formControlCommittedText = (committed, timeout) =>
 /**
  * A date box inside a calendar picker can show a typed date the page hasn't taken, as one that
  * takes it only on Enter or once focus leaves. Once the box shows the date, commit "keyboard"
- * presses Enter, then blur "tab" presses Tab or "blur" blurs the box; both are "none" by default,
- * since Enter in a plain form can submit it. Then, within the timeout, the box must show the date
- * again and committed must agree: a locator whose text shows the date, or a function of
- * { iso, text } that returns true once the page took it. With none of them it returns at once.
+ * presses Enter, then blur "tab" presses Tab (and blurs a native date input Tab left focused) or
+ * "blur" blurs the box; both are "none" by default, since Enter in a plain form can submit it.
+ * Then, within the timeout, the box must show the date again and committed must agree: a locator
+ * whose text shows the whole date, or a function of { iso, text } that returns true once the page
+ * took it. With none of them it returns at once.
  */
 const formControlCommitDate = async (control, shape, date, options, timeout) => {
   const { commit = "none", blur = "none", committed } = options;
@@ -428,8 +442,12 @@ const formControlCommitDate = async (control, shape, date, options, timeout) => 
     await control.press("Enter", { timeout }).catch(() => {
       throw formControlFailure("not_committed");
     });
-  if (blur === "tab") await control.press("Tab", { timeout }).catch(() => undefined);
-  else if (blur === "blur") await control.blur({ timeout }).catch(() => undefined);
+  if (blur === "tab") {
+    await control.press("Tab", { timeout }).catch(() => undefined);
+    // Tab moves between a native date input's own parts, so one it leaves focused is blurred.
+    const focused = () => control.evaluate((element) => element === element.ownerDocument.activeElement, undefined, { timeout });
+    if (shape === "date" && (await focused().catch(() => false))) await control.blur({ timeout }).catch(() => undefined);
+  } else if (blur === "blur") await control.blur({ timeout }).catch(() => undefined);
   const until = Date.now() + timeout;
   const left = () => Math.max(1, Math.min(1000, until - Date.now()));
   while (true) {
@@ -452,7 +470,7 @@ const fillDate = async (control, iso, format, options = {}) => {
     formatDate(iso, "YYYY-MM-DD");
     await formControlFill(control, iso, timeout);
     if ((await control.inputValue({ timeout })) !== iso) throw formControlFailure("not_committed");
-    return formControlCommitDate(control, shape, { iso, text: iso, locale }, options, timeout);
+    return formControlCommitDate(control, shape, { iso, text: iso, locale, whole: true }, options, timeout);
   }
   if (shape === "select" || shape === "combobox") {
     await chooseOption(control, formControlDateCandidates(iso, format, locale), { timeout });
@@ -460,7 +478,7 @@ const fillDate = async (control, iso, format, options = {}) => {
   }
   if (shape !== "text") throw formControlFailure("control_unsupported");
   const text = formatDate(iso, format, locale);
-  const date = { iso, text, locale };
+  const date = { iso, text, locale, whole: formControlWholeDate(format) };
   await formControlFill(control, text, timeout);
   if (formControlSameText(await control.inputValue({ timeout }), text))
     return formControlCommitDate(control, shape, date, options, timeout);
