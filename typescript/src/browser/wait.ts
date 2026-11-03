@@ -1190,8 +1190,9 @@ const waitForChange = async (fields, options = {}) => {
  *   caches or renames never hangs the wait: name one only for a write's commit request.
  * - `{ dialog: true | type | [types] }`: a native dialog opened, even one the action's own click
  *   raised. Page scripts stop while it is open, so it decides at once and wins over every other
- *   outcome, whatever the listed order. Other outcomes that already matched are on the result
- *   too, such as `result.response`: prefer checking them before reading the dialog as a refusal.
+ *   outcome, whatever the listed order. Response and popup outcomes that already matched are on
+ *   the result too, such as `result.response`: prefer checking them before reading the dialog as a
+ *   refusal.
  *   The wait never accepts or dismisses it: a dialog that opened while it listened is on the
  *   result's or failure's `dialog`, whichever won, and the result's summary names it. A dialog of
  *   a type no outcome names fails as `outcome_unknown` only when no response or popup outcome has
