@@ -1319,8 +1319,8 @@ return { outcomeWaitFailure, outcomeWaitNote, outcomeWaitChanged, outcomeWaitObs
  * - Otherwise the commit is `done`: `queued` for a 202, or a body whose status says queued, pending
  *   or processing, with that word as `status_label`, else `completed`. An outcome with no response
  *   is `not_done` when the page shows a new error, else `unclear`. A native dialog that opened
- *   during the wait and says the write failed is `not_done`, unless the response is a 5xx or a 201
- *   with a Location, which proves a record: that is `unclear`, naming both. While one stays open
+ *   during the wait and says the write failed is `not_done`, unless the response is a 5xx or
+ *   proves a record (a 201 with a Location): that is `unclear`, naming both. While one stays open
  *   the page can't be read, which is `unclear`.
  *
  * It never clicks, and it reads the body for at most 1 s and the page for at most about 2 s.
