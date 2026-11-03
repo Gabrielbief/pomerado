@@ -298,6 +298,9 @@ for (const [label, format, old, fresh] of [
   ["Month", "MM", "Oct 11, 2026", "2026-11-14"],
   ["Day and month", "MM/DD", "Oct 1, 2026, 11:14 AM", "14 November 2026"],
   ["Start date", "MM/DD/YYYY", "Oct 1, 2026", "11/14/2026"],
+  // Numbers that start with the year, or end with a two-digit one, can be read from a time too.
+  ["Start date", "YYYY-MM-DD", "Oct 1, 2026, 11:14 AM", "2026-11-14"],
+  ["Start date", "DD.MM.YY", "Oct 1, 2026, 14:11:26", "14 Nov 2026"],
 ] as const)
   test(`fillDate never reads a committed label's ${old} as ${format} of a new date`, async ({
     page,
@@ -316,6 +319,23 @@ for (const [label, format, old, fresh] of [
       .evaluate((button, fresh) => button.setAttribute("aria-label", "Choose date, selected date is " + fresh), fresh);
     expect(await call(page, fill)).toEqual({ result: { shape: "text" } });
   });
+
+test("fillDate never reads a committed label's year and time as a native date input's date", async ({
+  page,
+}) => {
+  await page.setContent(`<form><label>Start date<input type="date" name="start"></label>
+<button type="button" aria-label="Choose date, selected date is Oct 1, 2026, 11:14 AM">Calendar</button></form>`);
+  const fill = `return await fillDate(page.getByLabel("Start date"), "2026-11-14", "MM/DD/YYYY", {
+  committed: page.getByRole("button", { name: /^Choose date/ }),
+  timeout: 1000,
+});`;
+  expect(await call(page, fill)).toEqual({ error: "not_committed" });
+  // Once the label names the new date, the same call takes it.
+  await page
+    .getByRole("button")
+    .evaluate((button) => button.setAttribute("aria-label", "Choose date, selected date is Nov 14, 2026"));
+  expect(await call(page, fill)).toEqual({ result: { shape: "date" } });
+});
 
 test("fillDate fills split month, day and year text boxes", async ({ page }) => {
   await page.setContent(`<form><fieldset><legend>Date of birth</legend>

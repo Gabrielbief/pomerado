@@ -105,12 +105,13 @@ export const blockingFieldsHook = "__pomeradoBlockingFields";
  *   form can submit it. Then the box must still show the date, and `committed`, when given, must
  *   show it too: a locator whose text, `aria-label` or value shows the whole date, as ISO
  *   (`2026-11-14`), with the month's name in the page's language (`MMM D, YYYY`, `D MMMM YYYY` and
- *   the like) or, when `format` writes the year, month and day, as typed, such as the picker's own
- *   "selected date is ..." button; or a function of `{ iso, text }` (`text` as typed) that returns
- *   true once the page took the date. For one part of a split date, `committed` still shows the
- *   whole date. When they still don't by the timeout, it throws `not_committed`. With none of the
- *   three, it returns as soon as the box shows the date. A split date's select or custom dropdown
- *   takes none of them: choosing its option commits it.
+ *   the like) or, in a text box whose `format` writes the month and day before a four-digit year,
+ *   as typed, such as the picker's own "selected date is ..." button; or a function of
+ *   `{ iso, text }` (`text` as typed) that returns true once the page took the date. For one part
+ *   of a split date, `committed` still shows the whole date. When they still don't by the timeout,
+ *   it throws `not_committed`. With none of the three, it returns as soon as the box shows the
+ *   date. A split date's select or custom dropdown takes none of them: choosing its option commits
+ *   it.
  * - `chooseOption(control, wanted, { timeout }?)`: chooses the one option of a native select or a
  *   custom dropdown whose label or value is one of `wanted` (a string or a list of alternate
  *   spellings, such as `["CA", "California"]`), ignoring case, accents, spacing and punctuation.
@@ -397,10 +398,16 @@ const chooseOption = async (control, wanted, options = {}) => {
 /** Letters and digits only: an input mask adds or drops separators, never the date itself. */
 const formControlSameText = (shown, expected) =>
   formControlText(shown).replace(/[^\p{L}\p{N}]/gu, "") === formControlText(expected).replace(/[^\p{L}\p{N}]/gu, "");
-/** Whether a format writes the whole date, its year, month and day, so its text alone names the date. */
+/**
+ * Whether a format's text alone names the date: it writes the month, the day and then a four-digit
+ * year. Numbers that start with the year or end with a two-digit one can also be read from a year
+ * and a time, such as "2026, 11:14" for 2026-11-14 or "14:11:26" for 14.11.26; the ISO date and
+ * the month's name still match those.
+ */
 const formControlWholeDate = (format) => {
-  const kinds = new Set((String(format).match(/YYYY|YY|MMMM|MMM|MM|M|DD|D/g) ?? []).map((token) => token[0]));
-  return kinds.has("Y") && kinds.has("M") && kinds.has("D");
+  const tokens = String(format).match(/YYYY|YY|MMMM|MMM|MM|M|DD|D/g) ?? [];
+  const kinds = tokens.map((token) => token[0]);
+  return kinds.includes("M") && kinds.includes("D") && kinds[0] !== "Y" && tokens.includes("YYYY") && !tokens.includes("YY");
 };
 /**
  * Whether text shows the date: as the ISO date itself, between non-digits; as whole words of it
@@ -470,7 +477,7 @@ const fillDate = async (control, iso, format, options = {}) => {
     formatDate(iso, "YYYY-MM-DD");
     await formControlFill(control, iso, timeout);
     if ((await control.inputValue({ timeout })) !== iso) throw formControlFailure("not_committed");
-    return formControlCommitDate(control, shape, { iso, text: iso, locale, whole: true }, options, timeout);
+    return formControlCommitDate(control, shape, { iso, text: iso, locale, whole: false }, options, timeout);
   }
   if (shape === "select" || shape === "combobox") {
     await chooseOption(control, formControlDateCandidates(iso, format, locale), { timeout });
