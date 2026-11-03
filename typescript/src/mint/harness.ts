@@ -52,6 +52,8 @@ import {
   HostRefusalSource,
   isReadOrWriteChoice,
   LiveTestsRequest,
+  maximumOutputIssues,
+  maximumOutputIssueText,
   MintFailure,
   MintRequest,
   MintServices,
@@ -753,6 +755,19 @@ const inputIssueText = (issues: MintFailure["inputIssues"]) =>
             `${path === "" ? "the input itself" : JSON.stringify(path)} (${issue})`,
         )
         .join(", ")}.`;
+
+/** A host's output issue text cut to `maximumOutputIssueText`. */
+const outputIssueText = (text: string) =>
+  text.length <= maximumOutputIssueText ? text : `${text.slice(0, maximumOutputIssueText - 1)}…`;
+
+/** The host's output issues as the minter gets them: at most 20, each text cut to 200. */
+const boundedOutputIssues = (issues: NonNullable<MintFailure["outputIssues"]>) =>
+  issues.slice(0, maximumOutputIssues).map(({ path, issue, expected, observed }) => ({
+    path: outputIssueText(path),
+    issue,
+    ...(expected === undefined ? {} : { expected: outputIssueText(expected) }),
+    ...(observed === undefined ? {} : { observed: outputIssueText(observed) }),
+  }));
 
 /** What the agent does about a question its script asked that reached nobody. */
 const scriptQuestionInstruction: Readonly<
@@ -6633,7 +6648,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     error.code,
                     error.reason,
                     {},
-                    "Not published: the output schema has a `status` of `refused` that the host can't read as a declared refusal, so this refusal would end as an unknown outcome. Put each refusal shape in the output's top-level union, and give every other branch a listed `status`. Each refusal shape requires `status` `\"refused\"` and a `reason` from a listed set of stable lowercase codes. Then call finish_build again with the same executionId. The host reads the schema offline; never run the write again for this.",
+                    "Not published: the output schema has a `status` of `refused` that the host can't read as a declared refusal, so this refusal would end as an unknown outcome. Put each refusal shape in the output's top-level union. Make every other branch unambiguous in one of two ways: give it a `status` that lists only values other than `\"refused\"`, or leave `status` out, so the branch matches an output the write returns without one, and close the branch with `additionalProperties: false`, as a `Schema.Struct` with no record or index signature beside it does. Each refusal shape requires `status` `\"refused\"` and a `reason` from a listed set of stable lowercase codes. Then call finish_build again with the same executionId. The host reads the schema offline; never run the write again for this.",
                   );
                 if (
                   error.reason === "confirmation_undeclared" ||
@@ -6648,7 +6663,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     error.reason,
                     error.reason === "contract_input_mismatch" && error.inputIssues !== undefined
                       ? { inputIssues: error.inputIssues }
-                      : {},
+                      : error.reason === "contract_output_mismatch" &&
+                          error.outputIssues !== undefined &&
+                          error.outputIssues.length > 0
+                        ? { outputIssues: boundedOutputIssues(error.outputIssues) }
+                        : {},
                     (error.reason === "confirmation_undeclared"
                       ? "Not published: the composed script declares no write confirmation. Add write: {confirmation: 'message' | 'readback' | 'unverifiable'} to its defineOperation, matching what the session read, and call finish_build again with the same executionId."
                       : error.reason === "commit_marks_undeclared"
