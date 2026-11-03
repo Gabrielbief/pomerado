@@ -1601,17 +1601,24 @@ it.each([
 
 // A host that lists where the output fails the schema hands the minter that list as data, as
 // `inputIssues` is for the input, bounded; a host that lists none leaves the refusal as it was.
-it("returns the host's output issues with a contract output mismatch, at most 20", async () => {
+it("returns the host's output issues with a contract output mismatch, at most 20, each text at most 200", async () => {
   const issue = (index: number) => ({
     path: `items[].field${index}`,
     issue: "type" as const,
     expected: "an integer",
     observed: "string",
   });
+  const long = "x".repeat(300);
   const refusals: unknown[] = [];
   for (const outputIssues of [
     [{ path: "status", issue: "missing" as const, expected: '"quoted"', observed: "absent" }],
-    Array.from({ length: 25 }, (_, index) => issue(index)),
+    Array.from({ length: 25 }, (_, index) =>
+      index === 0
+        ? { ...issue(index), path: long }
+        : index === 1
+          ? { ...issue(index), expected: long }
+          : issue(index),
+    ),
     undefined,
   ]) {
     const f = await fixture(
@@ -1638,9 +1645,16 @@ it("returns the host's output issues with a contract output mismatch, at most 20
     reason: "contract_output_mismatch",
     outputIssues: [{ path: "status", issue: "missing", expected: '"quoted"', observed: "absent" }],
   });
-  expect(Reflect.get(Object(many), "outputIssues")).toEqual(
-    Array.from({ length: 20 }, (_, index) => issue(index)),
-  );
+  const returned: unknown = Reflect.get(Object(many), "outputIssues");
+  expect(returned).toHaveLength(20);
+  const [cutPath, cutExpected, ...rest] = Array.isArray(returned) ? returned : [];
+  const pathText = String(Reflect.get(Object(cutPath), "path"));
+  const expectedText = String(Reflect.get(Object(cutExpected), "expected"));
+  expect(pathText).toHaveLength(200);
+  expect(pathText.endsWith("…")).toBe(true);
+  expect(expectedText).toHaveLength(200);
+  expect(expectedText.endsWith("…")).toBe(true);
+  expect(rest).toEqual(Array.from({ length: 18 }, (_, index) => issue(index + 2)));
   expect(none).toMatchObject({ reason: "contract_output_mismatch" });
   expect(none).not.toHaveProperty("outputIssues");
 });
