@@ -90,6 +90,18 @@ const race = async (page: Page, outcomes: string, options = "", after = "undefin
   return answer.result as Raced;
 };
 
+/**
+ * A Save the site refuses: the POST answers 422, and the site's script, still running a few ms
+ * later, says why in a native alert. Page scripts stop while the alert is open.
+ */
+const refusedSave = recordForm(`
+  const answer = await fetch("/api/records", { method: "POST", body: "{}" });
+  const until = Date.now() + 20;
+  while (Date.now() < until);
+  if (!answer.ok) alert("Record limit reached for today");`);
+const refuses = (request: Request): Reply | undefined =>
+  request.method() === "POST" ? { status: 422, body: '{"error":"limit"}' } : undefined;
+
 // The common outcomes of a save, highest priority first.
 const saveOutcomes = `
   invalid: { invalid: form },
@@ -487,12 +499,12 @@ test.describe("outcome race after an action", () => {
     expect(answer).toMatchObject({ outcome: "alerted", evidence: { type: "alert", message: "Record saved" }, extra: "ok" });
   });
 
-  test("a dialog that opens after another outcome won is still handed back, not left to freeze the page", async ({
-    page,
-  }) => {
+  test("a dialog that opens after another outcome won is not held, so it never freezes the page", async ({ page }) => {
     await site(
       page,
-      { "/": recordForm(`await fetch("/api/records", { method: "POST", body: "{}" }); alert("Saved");`) },
+      {
+        "/": recordForm(`await fetch("/api/records", { method: "POST", body: "{}" }); setTimeout(() => alert("Saved"), 300);`),
+      },
       (request) => (request.method() === "POST" ? { status: 201, body: "{}" } : undefined),
     );
     const answer = await race(
@@ -500,13 +512,105 @@ test.describe("outcome race after an action", () => {
       `committed: { response: { method: "POST", status: 201 } }, alerted: { dialog: true },`,
       "",
       `(async () => {
-        // An alert that opened while the wait listened is handed back; one that opened after it
-        // stopped listening was dismissed by Playwright. Either way the page stays readable.
-        await result.dialog?.dismiss();
-        return { readable: await page.evaluate(() => 1 + 1) };
+        // The alert opens once the wait returned and stopped listening, so Playwright dismisses it
+        // and the page stays readable. One that opens while the wait listens wins instead.
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return { held: result.dialog !== undefined, readable: await page.evaluate(() => 1 + 1) };
       })()`,
     );
-    expect(answer).toMatchObject({ outcome: "committed", extra: { readable: 2 } });
+    expect(answer).toMatchObject({ outcome: "committed", extra: { held: false, readable: 2 } });
+  });
+
+  test("a native dialog that opens just after a save response matched wins, so the next read does not hang", async ({
+    page,
+  }) => {
+    await site(page, { "/": refusedSave }, refuses);
+    const answer = await race(
+      page,
+      `invalid: { invalid: form }, saved: { response: { method: "POST", url: "/api/records" } }, refused: { dialog: true },`,
+      "",
+      `(async () => {
+        const finished = (promise) =>
+          Promise.race([promise.then(() => "finished"), new Promise((resolve) => setTimeout(() => resolve("still waiting"), 1500))]);
+        // The code's next step: on a save it reads the response and the page; on a dialog it hands
+        // the dialog over first.
+        let next;
+        if (result.outcome === "saved")
+          next = await finished(Promise.all([result.response.text(), page.evaluate(() => document.title)]));
+        else {
+          await result.dialog.dismiss();
+          next = await finished(page.evaluate(() => document.title));
+        }
+        await result.dialog?.dismiss().catch(() => undefined);
+        return { next, summary: waitReport().at(-1).summary };
+      })()`,
+    );
+    expect(answer).toMatchObject({
+      outcome: "refused",
+      kind: "dialog",
+      evidence: { type: "alert", message: "Record limit reached for today" },
+      extra: { next: "finished", summary: expect.stringContaining("; a native alert dialog is left open on the result's dialog") },
+    });
+  });
+
+  test("a dialog of a type no outcome names keeps the listed order: a response that matched first still wins", async ({
+    page,
+  }) => {
+    await site(page, { "/": refusedSave }, refuses);
+    const answer = await race(
+      page,
+      `invalid: { invalid: form }, saved: { response: { method: "POST", url: "/api/records" } }, confirmed: { dialog: "confirm" },`,
+      "",
+      `(async () => {
+        const held = result.dialog?.type() ?? null;
+        await result.dialog?.dismiss();
+        return { held, summary: waitReport().at(-1).summary };
+      })()`,
+    );
+    expect(answer).toMatchObject({
+      outcome: "saved",
+      kind: "response",
+      evidence: { status: 422 },
+      extra: { held: "alert", summary: expect.stringContaining("; a native alert dialog is left open on the result's dialog") },
+    });
+  });
+
+  test("with no dialog outcome named the wait leaves dialogs alone and the response wins", async ({ page }) => {
+    await site(page, { "/": refusedSave }, refuses);
+    const answer = await race(
+      page,
+      `invalid: { invalid: form }, saved: { response: { method: "POST", url: "/api/records" } },`,
+      "",
+      `(async () => ({ held: result.dialog !== undefined, summary: waitReport().at(-1).summary }))()`,
+    );
+    expect(answer).toMatchObject({ outcome: "saved", extra: { held: false, summary: expect.not.stringContaining("dialog") } });
+  });
+
+  test("a beforeunload dialog of a type no outcome names still fails at once, held for the code", async ({ page }) => {
+    await site(page, {
+      "/": recordForm(
+        `location.href = "/next";`,
+        `<script>addEventListener("beforeunload", (event) => { event.preventDefault(); event.returnValue = ""; });</script>`,
+      ),
+      "/next": "<h1>Next</h1>",
+    });
+    const answer = await call(
+      page,
+      `try {
+        await waitForOutcomeResult({ left: { url: "/next" }, alerted: { dialog: "alert" } },
+          { action: () => page.locator("#save").click(), noProgressMs: 2000, timeout: 4000 });
+        return "returned";
+      } catch (error) {
+        const type = error.dialog?.type() ?? null;
+        await error.dialog?.dismiss();
+        return { reason: error.reason, type, message: error.message };
+      }`,
+    );
+    expect(answer.result).toMatchObject({
+      reason: "outcome_unknown",
+      type: "beforeunload",
+      message: expect.stringMatching(/a native beforeunload dialog opened that no outcome names$/u),
+    });
   });
 
   test("a native dialog no outcome names fails at once, naming its type", async ({ page }) => {
