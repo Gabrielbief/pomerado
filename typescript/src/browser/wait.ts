@@ -1293,9 +1293,10 @@ return { outcomeWaitFailure, outcomeWaitNote, outcomeWaitChanged, outcomeWaitObs
  * the page, and returns `CommitConfirmation`, plain data a call can return. It never marks a write
  * done or not done without proof: whatever the response and the page leave open is `unclear`.
  *
- * - A response that is not 2xx or 3xx is `not_done`; a 201 with a Location is `done` at once. A 3xx
- *   whose Location is the page that posted (same path), or whose query names an error or failure,
- *   is `unclear` unless the page shows an error.
+ * - A 4xx response, or one below 200, is `not_done`; a 5xx is `unclear`, since a server can fail
+ *   after it saved; a 201 with a Location is `done` at once. A 3xx whose Location is the page that
+ *   posted (same path), or whose query names an error or failure, is `unclear` unless the page
+ *   shows an error.
  * - A 2xx body that reads as JSON is `not_done` for a success field (`success`, `succeeded`,
  *   `isSuccess`, any case) that is false, `"false"`, 0 or `"no"` or holds an error word, `ok:
  *   false`, an error field holding an error (not empty, and not a word for none such as "No
@@ -1318,8 +1319,9 @@ return { outcomeWaitFailure, outcomeWaitNote, outcomeWaitChanged, outcomeWaitObs
  * - Otherwise the commit is `done`: `queued` for a 202, or a body whose status says queued, pending
  *   or processing, with that word as `status_label`, else `completed`. An outcome with no response
  *   is `not_done` when the page shows a new error, else `unclear`. A native dialog that opened
- *   during the wait and says the write failed is `not_done`; while one stays open the page can't
- *   be read, which is `unclear`.
+ *   during the wait and says the write failed is `not_done`, unless the response is a 5xx or
+ *   proves a record (a 201 with a Location): that is `unclear`, naming both. While one stays open
+ *   the page can't be read, which is `unclear`.
  *
  * It never clicks, and it reads the body for at most 1 s and the page for at most about 2 s.
  */
@@ -1533,13 +1535,17 @@ const confirmCommit = await (async () => {
     });
     const notDone = (reason) => ({ state: "not_done", status: "failed", reason });
     const unclear = (reason) => ({ state: "unclear", status: "unconfirmed", reason });
-    // A native dialog that opened during the wait and says the write failed is the page's answer.
-    // While one stays open the page can't be read, and the look below finds it unclear.
+    // A native dialog that opened during the wait and says the write failed is the page's answer,
+    // unless the response is a server error or proves a record (below). While one stays open the
+    // page can't be read, and the look below finds it unclear.
     const dialog = outcome?.dialog;
-    if (dialog !== undefined && dialog !== null && saysError(dialog.message()))
-      return notDone("a native " + dialog.type() + ' dialog said "' + clip(dialog.message()) + '"');
+    const dialogFailed =
+      dialog !== undefined && dialog !== null && saysError(dialog.message())
+        ? "a native " + dialog.type() + ' dialog said "' + clip(dialog.message()) + '"'
+        : undefined;
     const response = outcome?.response;
     if (response === undefined || response === null) {
+      if (dialogFailed !== undefined) return notDone(dialogFailed);
       const seen = await watch(page);
       const answered = outcome?.outcome === undefined ? "" : '; "' + outcome.outcome + '" answered the wait';
       if (seen !== undefined && seen.errors.length > 0)
@@ -1548,9 +1554,17 @@ const confirmCommit = await (async () => {
     }
     const status = response.status();
     const where = response.request().method() + " " + new URL(response.url()).pathname + " answered " + status;
-    if (status < 200 || status >= 400) return notDone(where);
+    // A server can fail after it saved, so a 5xx never proves the write did not go through.
+    if (status >= 500)
+      return unclear(where + ", a server error, which can come after a save" + (dialogFailed === undefined ? "" : "; " + dialogFailed));
     const location = String(response.headers()["location"] ?? "").trim();
-    if (status === 201 && location !== "") return done(where + " with Location " + clip(location), false);
+    // A 201 with a Location names the record the commit created, so a dialog's words alone can't
+    // make it not done.
+    const created = status === 201 && location !== "" ? where + " with Location " + clip(location) : undefined;
+    if (created !== undefined && dialogFailed !== undefined) return unclear(created + ", which proves a record, but " + dialogFailed);
+    if (dialogFailed !== undefined) return notDone(dialogFailed);
+    if (status < 200 || status >= 400) return notDone(where);
+    if (created !== undefined) return done(created, false);
     const body = await readBody(response, status);
     const found = body.json === undefined ? {} : judgeBody(body.json);
     if (found.failed !== undefined) return notDone(where + "; its body's " + found.failed);
