@@ -587,21 +587,37 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       }));
     const result = (candidate, observations, evidence) => {
       const handles = events.hit(candidate.name)?.handles ?? {};
+      // A dialog that won may follow an event outcome that already matched, such as a save's 2xx
+      // response: the last look the page allowed can predate it, so each event outcome reads as it
+      // stands now, and those that matched are on the result and in the summary too.
+      const evented = ["response", "dialog", "popup"];
+      const also = candidate.kind !== "dialog" ? []
+        : candidates.filter((each) => each !== candidate && evented.includes(each.kind) && events.hit(each.name) !== undefined);
+      const observed = candidate.kind !== "dialog" ? observations
+        : Object.fromEntries(candidates.flatMap((each) =>
+          evented.includes(each.kind) ? [[each.name, outcomeWaitEventRead(each, events)]]
+            : observations[each.name] === undefined ? [] : [[each.name, observations[each.name]]]));
       const answer = {
         outcome: candidate.name,
         kind: candidate.kind,
         afterMs: Date.now() - begun,
         looks,
         evidence,
-        observations,
+        observations: observed,
       };
       for (const [name, value] of Object.entries(handles)) outcomeWaitHidden(answer, name, value);
-      // A dialog that opened while the wait listened stays open whichever outcome won.
+      for (const each of also)
+        for (const [name, value] of Object.entries(events.hit(each.name).handles))
+          if (answer[name] === undefined) outcomeWaitHidden(answer, name, value);
+      // A dialog that opened while the wait listened stays open whichever outcome won, and the
+      // summary says so.
       if (answer.dialog === undefined) outcomeWaitHidden(answer, "dialog", events.dialog());
       finish(
         { outcome: candidate.name },
         '"' + candidate.name + '"' + (candidate.kind === "locator" ? "" : " (" + candidate.kind + ")") + " showed after " +
-          answer.afterMs + " ms (" + looks + (looks === 1 ? " look)" : " looks)"),
+          answer.afterMs + " ms (" + looks + (looks === 1 ? " look)" : " looks)") +
+          also.map((each) => '; "' + each.name + '" (' + each.kind + ") also matched").join("") +
+          (answer.dialog === undefined ? "" : "; a native " + answer.dialog.type() + " dialog is left open on the result's dialog"),
       );
       return answer;
     };
@@ -625,13 +641,17 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       const now = Date.now();
       const stale = now < unchangedFrom ||
         (now < until - unchangedMs && (inflightAtStart || progress.causedInflight()));
-      // With the page unreadable, only the outcomes the page announced as events decide, in the
-      // listed order.
+      // A native dialog stops the page's scripts, so nothing else can still change: a dialog outcome
+      // it matched wins over every other outcome, whatever the listed order. Otherwise, with the
+      // page unreadable, only the outcomes the page announced as events decide, in the listed order.
       const blocked = events.dialogOpen() || (observations === undefined && events.anyHit());
       // While a navigation the action set off is on its way, the elements shown are the old
       // document's, about to be replaced: a locator or invalid fields count only on the new one.
       const replacing = key !== undefined && events.navigating(state.actedAt);
-      const shown = candidates.find((candidate) =>
+      const dialogShown = events.dialogOpen()
+        ? candidates.find((candidate) => candidate.kind === "dialog" && events.hit(candidate.name) !== undefined)
+        : undefined;
+      const shown = dialogShown ?? candidates.find((candidate) =>
         blocked ? ["response", "dialog", "popup"].includes(candidate.kind) && events.hit(candidate.name) !== undefined
           : !(replacing && (candidate.kind === "locator" || candidate.kind === "invalid")) &&
             outcomeWaitShows(candidate, observations?.[candidate.name], state, stale, now));
@@ -1169,11 +1189,16 @@ const waitForChange = async (fields, options = {}) => {
  *   `[low, high]` or a function). It races the page's answers, so a request the site batches,
  *   caches or renames never hangs the wait: name one only for a write's commit request.
  * - `{ dialog: true | type | [types] }`: a native dialog opened, even one the action's own click
- *   raised. Page scripts stop while it is open, so it decides at once, and a dialog of a type no
- *   outcome names fails as `outcome_unknown`. The wait never accepts or dismisses it: a dialog
- *   that opened while it listened is on the result's or failure's `dialog`, whichever won. An
- *   action still waiting to click when a dialog opens clicks once the dialog is handled, so
- *   handle it before ending the call.
+ *   raised. Page scripts stop while it is open, so it decides at once and wins over every other
+ *   outcome, whatever the listed order. Response and popup outcomes that already matched are on
+ *   the result too, such as `result.response`: prefer checking them before reading the dialog as a
+ *   refusal.
+ *   The wait never accepts or dismisses it: a dialog that opened while it listened is on the
+ *   result's or failure's `dialog`, whichever won, and the result's summary names it. A dialog of
+ *   a type no outcome names fails as `outcome_unknown` only when no response or popup outcome has
+ *   already matched; otherwise that outcome wins with the dialog still open on `result.dialog`, so
+ *   prefer handing that dialog over before any other read. An action still waiting to click when a
+ *   dialog opens clicks once the dialog is handled, so handle it before ending the call.
  * - `{ popup: true | (page) => boolean }`: the page opened a new tab or window.
  * - `{ announced: string | RegExp }`: a live region (`aria-live`, or the role `alert`, `status`,
  *   `log` or `alertdialog`) announced matching text after the action, as a screen reader hears

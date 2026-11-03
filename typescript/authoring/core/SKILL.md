@@ -770,7 +770,8 @@ that answer has and the step can cause, such as a results list that holds a
 row. Prefer closing a banner, tour or dialog that opens on its own with `waitForReady`'s
 `dismiss` over naming it as an answer, since `dismiss` also closes one that opens later, before
 the next action. The first listed wins when several show, so list a refusal, error or greyed-out choice
-first, then the empty state, then results. Pass the step itself as `action`, such as
+first, then the empty state, then results; a `{ dialog }` answer that matched wins whatever the order.
+Pass the step itself as `action`, such as
 `() => apply.click()`: the wait runs it once, and an answer the page already showed before it counts
 only after staying unchanged for `unchangedMs`, 2 s by default, so a list the step has not yet
 re-rendered is not read while a step that leaves the same answer still resolves; a new or
