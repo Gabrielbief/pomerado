@@ -1599,6 +1599,66 @@ it.each([
   },
 );
 
+// A host that lists where the output fails the schema hands the minter that list as data, as
+// `inputIssues` is for the input, bounded; a host that lists none leaves the refusal as it was.
+it("returns the host's output issues with a contract output mismatch, at most 20, each text at most 200", async () => {
+  const issue = (index: number) => ({
+    path: `items[].field${index}`,
+    issue: "type" as const,
+    expected: "an integer",
+    observed: "string",
+  });
+  const long = "x".repeat(300);
+  const refusals: unknown[] = [];
+  for (const outputIssues of [
+    [{ path: "status", issue: "missing" as const, expected: '"quoted"', observed: "absent" }],
+    Array.from({ length: 25 }, (_, index) =>
+      index === 0
+        ? { ...issue(index), path: long }
+        : index === 1
+          ? { ...issue(index), expected: long }
+          : issue(index),
+    ),
+    undefined,
+  ]) {
+    const f = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          yield* turn.actions.execute({ ...execution, purpose: "act" });
+          refusals.push(JSON.parse(yield* turn.actions.finish(publication)));
+        }),
+      {
+        publish: () =>
+          Effect.fail(
+            new MintFailure({
+              code: "PublicationUnavailable",
+              reason: "contract_output_mismatch",
+              ...(outputIssues === undefined ? {} : { outputIssues }),
+            }),
+          ),
+      },
+    );
+    await f.run({ ...request, effect: "write" });
+  }
+  const [one, many, none] = refusals;
+  expect(one).toMatchObject({
+    reason: "contract_output_mismatch",
+    outputIssues: [{ path: "status", issue: "missing", expected: '"quoted"', observed: "absent" }],
+  });
+  const returned: unknown = Reflect.get(Object(many), "outputIssues");
+  expect(returned).toHaveLength(20);
+  const [cutPath, cutExpected, ...rest] = Array.isArray(returned) ? returned : [];
+  const pathText = String(Reflect.get(Object(cutPath), "path"));
+  const expectedText = String(Reflect.get(Object(cutExpected), "expected"));
+  expect(pathText).toHaveLength(200);
+  expect(pathText.endsWith("…")).toBe(true);
+  expect(expectedText).toHaveLength(200);
+  expect(expectedText.endsWith("…")).toBe(true);
+  expect(rest).toEqual(Array.from({ length: 18 }, (_, index) => issue(index + 2)));
+  expect(none).toMatchObject({ reason: "contract_output_mismatch" });
+  expect(none).not.toHaveProperty("outputIssues");
+});
+
 // A write build's output mismatch asks for a schema its output decodes against, sends the minter to
 // the step that confirmed the write, and lets a field a later cancel, refund or delete left
 // unreadable go optional so the tool can publish. A read's text is unchanged.

@@ -251,6 +251,25 @@ export type HostRefusalBasis =
         | "unrecorded";
     };
 
+/**
+ * Where an output schema rejected the output a `contract_output_mismatch` refusal names, as the
+ * host lists it: the path (`""` for the output itself), what is wrong there (a required value
+ * `missing`, a `null` the schema rejects, a value of the wrong `type`, a value its `enum` or
+ * `const` doesn't list, or one that breaks another rule, `invalid`), what the schema expects there
+ * and the kind of value the output holds, such as `string` or `absent`. Never a value from the
+ * output, so it can go to the minter.
+ */
+export interface OutputIssue {
+  readonly path: string;
+  readonly issue: "missing" | "null" | "type" | "enum" | "invalid";
+  readonly expected?: string;
+  readonly observed?: string;
+}
+
+/** At most this many output issues go back to the minter, each text at most this long. */
+export const maximumOutputIssues = 20;
+export const maximumOutputIssueText = 200;
+
 export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
   /** Sub-cause, operation, underlying error, stack and context; see ERROR-LOGGING-STANDARD.md. */
@@ -307,6 +326,11 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly publishesOnRefusal?: true;
   /** Where the input schema rejected the input a `contract_input_mismatch` refusal names. */
   readonly inputIssues?: readonly InputIssue[];
+  /**
+   * Where the output schema rejected the output a `contract_output_mismatch` refusal names, which
+   * a host may list; the harness returns at most `maximumOutputIssues` of them to the minter.
+   */
+  readonly outputIssues?: readonly OutputIssue[];
   /** For `output_checks_blocked`, each blocking finding by path, check and count; never a value. */
   readonly outputFindings?: readonly Pick<OutputFinding, "path" | "check" | "count">[];
   /** Which host-recorded route evidence a `destination_validation` refusal lacked. */
