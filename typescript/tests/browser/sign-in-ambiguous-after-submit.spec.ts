@@ -17,8 +17,9 @@ import { expectNotCarried, hostKeyboard, hostPage } from "./autofill-host-page.j
 // screens' buttons. Right after a submit, the replay waits through that moment as it waits for a
 // screen not yet shown, and types or clicks nothing while the step matches more than one element.
 // Before anything was submitted, a step that matches twice refuses at once, as it always did.
-// The password screen goes 400 ms after the replay first saw both buttons, so the moment is seen
-// however long the host's submit took to return.
+// The password screen is hidden 400 ms after the replay first saw both buttons, so the moment is
+// seen however long the host's submit took to return. It is hidden, not removed, as a page that
+// keeps its screens in the document does.
 
 const site = "https://portal.example.test";
 const host = "portal.example.test";
@@ -33,8 +34,9 @@ test.describe.configure({ timeout: 120_000 });
  * The portal's one page. Its password screen posts the login to /api/session from its own script.
  * A 403 answer draws the verification screen (a code field in no form and a Verify button with the
  * same class as the Sign in button) beside it and moves the address to /verify; the password screen
- * goes only when the test calls `finishSwap`. A verified code loads the account. With `extraButton`
- * the password screen's form also shows a second primary button before anything is sent.
+ * is hidden only when the test calls `finishSwap`. A verified code loads the account. With
+ * `extraButton` the password screen's form also shows a second primary button before anything is
+ * sent.
  */
 const portal = (extraButton = false) => `<main>
 <section id="password-screen">
@@ -47,7 +49,10 @@ const portal = (extraButton = false) => `<main>
 </main>
 <script>
 window.verifyClicks = 0;
-window.finishSwap = () => document.getElementById("password-screen")?.remove();
+window.finishSwap = () => {
+  const old = document.getElementById("password-screen");
+  if (old) old.hidden = true;
+};
 const form = document.getElementById("login-form");
 form.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -124,8 +129,8 @@ type Inspected = { readonly field: string | undefined; readonly answer: string; 
 
 /**
  * One run's sign-in, answering the login ask and each code ask, with every fill and inspection.
- * With `swapMs`, the password screen goes that long after the code screen's first look found both
- * buttons.
+ * With `swapMs`, the password screen is hidden that long after the code screen's first look found
+ * both buttons.
  */
 const run = async (page: Page, swapMs?: number) => {
   const browser = await hostPage(page);
