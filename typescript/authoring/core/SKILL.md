@@ -737,7 +737,10 @@ expanded. `waitForReady(control, { overlays, expand, dismiss })` waits for all o
 enabled, uncovered and still, the overlays you name gone, the section toggle you name opened once,
 and the close controls you name for a tour, a what's-new dialog or a banner that opens on its own
 clicked, now or before a later action. A panel or dialog you opened does not go away by waiting: close it with its own
-control or Escape and check it closed. A click Playwright keeps reporting as intercepted by the
+control or Escape and check it closed. When a pop-up you opened is still open a moment after
+Escape, prefer clicking a neutral spot outside it, such as the page or section heading, and check
+again, since many pickers close only on an outside click; if it still stays open, throw naming it
+rather than waiting longer. A click Playwright keeps reporting as intercepted by the
 same element is a page state, not slowness. After an action that navigates or re-renders, wait
 for the committed state
 (URL, selected value or header) before checking identity or reading. Use bounded retrying
