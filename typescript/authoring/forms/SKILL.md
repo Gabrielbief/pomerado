@@ -101,6 +101,7 @@ fills an ISO date into whatever date control the page has: a native date input, 
 `MMMM`, `D`, `YYYY` and so on) in a text box, a select or a dropdown, whose option it matches by
 number or month name. It throws an `Error` named `FormControlFailure` whose message is a fixed
 reason, never a value.
+A date box inside a calendar picker can show a typed date the page hasn't taken. Prefer `fillDate(control, iso, format, { commit: "keyboard", blur: "tab", committed })`, where `committed` reads the picker's own selected date, such as its button's label, and prefer confirming the dates from the site's next request before reading results.
 
 `pickValue(control, wanted, options)` chooses one value in any picker: a native select, a
 datalist, an autocomplete or typeahead, an ARIA combobox, a dropdown built from divs, or a

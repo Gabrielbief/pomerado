@@ -92,11 +92,22 @@ export const blockingFieldsHook = "__pomeradoBlockingFields";
  * - `formControlShape(control, { timeout }?)`: the control's shape (`FormControlShape`).
  * - `formatDate(iso, format, locale?)`: an ISO `YYYY-MM-DD` date as `format` writes it (see
  *   the exported `formatDate`).
- * - `fillDate(control, iso, format, { timeout }?)`: fills an ISO date into whatever date control
- *   the page has: a native date input (always ISO), a text box written in `format` (typed again
- *   character by character when an input mask rewrote it), or one part of a split date (`MM`, `DD`
- *   or `YYYY`) in a text box, a native select or a custom dropdown, matched by number or month name.
- *   It returns `{ shape }`, never the value.
+ * - `fillDate(control, iso, format, { timeout, commit, blur, committed }?)`: fills an ISO date
+ *   into whatever date control the page has: a native date input (always ISO), a text box written
+ *   in `format` (typed again character by character when an input mask rewrote it), or one part of
+ *   a split date (`MM`, `DD` or `YYYY`) in a text box, a native select or a custom dropdown,
+ *   matched by number or month name. It returns `{ shape }`, never the value.
+ *   A box that shows the date has not always been taken by the page, as in a calendar picker that
+ *   takes a typed date only on Enter or once focus leaves. For a text box or a native date input,
+ *   once it shows the date, `commit: "keyboard"` presses Enter and then `blur: "tab"` presses Tab
+ *   or `blur: "blur"` blurs the box. Both are `"none"` by default, since Enter in a plain form can
+ *   submit it. Then the box must still show the date, and `committed`, when given, must show it
+ *   too: a locator whose text, `aria-label` or value shows the date as typed, as ISO or with the
+ *   month's name in the page's language (`MMM D, YYYY`, `D MMMM YYYY` and the like), such as the
+ *   picker's own "selected date is ..." button, or a function of `{ iso, text }` (`text` as typed)
+ *   that returns true once the page took the date. When they still don't by the timeout, it
+ *   throws `not_committed`. With none of the three, it returns as soon as the box shows the date.
+ *   A split date's select or custom dropdown takes none of them: choosing its option commits it.
  * - `chooseOption(control, wanted, { timeout }?)`: chooses the one option of a native select or a
  *   custom dropdown whose label or value is one of `wanted` (a string or a list of alternate
  *   spellings, such as `["CA", "California"]`), ignoring case, accents, spacing and punctuation.
@@ -383,6 +394,55 @@ const chooseOption = async (control, wanted, options = {}) => {
 /** Letters and digits only: an input mask adds or drops separators, never the date itself. */
 const formControlSameText = (shown, expected) =>
   formControlText(shown).replace(/[^\p{L}\p{N}]/gu, "") === formControlText(expected).replace(/[^\p{L}\p{N}]/gu, "");
+/**
+ * Whether text shows the date, as whole words of it: as typed, as ISO, or with the month's name in
+ * the page's language, such as "Nov 14, 2026" or "14 November 2026".
+ */
+const formControlShowsDate = (shown, date) => {
+  const phrase = (text) => " " + formControlText(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean).join(" ") + " ";
+  const named = ["MMMM D YYYY", "MMM D YYYY", "D MMMM YYYY", "D MMM YYYY"].map((form) => formatDate(date.iso, form, date.locale));
+  return [date.text, date.iso, ...named].some((form) => phrase(form).trim() !== "" && phrase(shown).includes(phrase(form)));
+};
+/** What a committed locator shows: a box's value, a select's choice, or an element's text and label. */
+const formControlCommittedText = (committed, timeout) =>
+  committed
+    .evaluate((node) =>
+      node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
+        ? node.value
+        : node instanceof HTMLSelectElement
+          ? (node.selectedOptions[0]?.textContent ?? "") + " " + node.value
+          : (node.innerText ?? node.textContent ?? "") + " " + (node.getAttribute("aria-label") ?? ""), undefined, { timeout })
+    .catch(() => null);
+/**
+ * A date box inside a calendar picker can show a typed date the page hasn't taken, as one that
+ * takes it only on Enter or once focus leaves. Once the box shows the date, commit "keyboard"
+ * presses Enter, then blur "tab" presses Tab or "blur" blurs the box; both are "none" by default,
+ * since Enter in a plain form can submit it. Then, within the timeout, the box must show the date
+ * again and committed must agree: a locator whose text shows the date, or a function of
+ * { iso, text } that returns true once the page took it. With none of them it returns at once.
+ */
+const formControlCommitDate = async (control, shape, date, options, timeout) => {
+  const { commit = "none", blur = "none", committed } = options;
+  if (commit === "none" && blur === "none" && !committed) return { shape };
+  if (commit === "keyboard")
+    await control.press("Enter", { timeout }).catch(() => {
+      throw formControlFailure("not_committed");
+    });
+  if (blur === "tab") await control.press("Tab", { timeout }).catch(() => undefined);
+  else if (blur === "blur") await control.blur({ timeout }).catch(() => undefined);
+  const until = Date.now() + timeout;
+  const left = () => Math.max(1, Math.min(1000, until - Date.now()));
+  while (true) {
+    // A box the page removed, as after an Enter that submitted its form, lost the date too.
+    const shown = await control.inputValue({ timeout: left() }).catch(() => null);
+    let kept = shown !== null && formControlSameText(shown, date.text);
+    if (kept && typeof committed === "function") kept = Boolean(await committed({ iso: date.iso, text: date.text }));
+    else if (kept && committed) kept = formControlShowsDate((await formControlCommittedText(committed, left())) ?? "", date);
+    if (kept) return { shape };
+    if (Date.now() >= until) throw formControlFailure("not_committed");
+    await formControlSleep(50);
+  }
+};
 const fillDate = async (control, iso, format, options = {}) => {
   const timeout = options.timeout ?? 10000;
   const shape = await formControlShape(control, { timeout });
@@ -392,7 +452,7 @@ const fillDate = async (control, iso, format, options = {}) => {
     formatDate(iso, "YYYY-MM-DD");
     await formControlFill(control, iso, timeout);
     if ((await control.inputValue({ timeout })) !== iso) throw formControlFailure("not_committed");
-    return { shape };
+    return formControlCommitDate(control, shape, { iso, text: iso, locale }, options, timeout);
   }
   if (shape === "select" || shape === "combobox") {
     await chooseOption(control, formControlDateCandidates(iso, format, locale), { timeout });
@@ -400,14 +460,17 @@ const fillDate = async (control, iso, format, options = {}) => {
   }
   if (shape !== "text") throw formControlFailure("control_unsupported");
   const text = formatDate(iso, format, locale);
+  const date = { iso, text, locale };
   await formControlFill(control, text, timeout);
-  if (formControlSameText(await control.inputValue({ timeout }), text)) return { shape };
+  if (formControlSameText(await control.inputValue({ timeout }), text))
+    return formControlCommitDate(control, shape, date, options, timeout);
   // A masked field rewrites what is filled at once; it takes the date typed key by key, with or
   // without its separators.
   for (const keys of [text, text.replace(/[^\p{L}\p{N}]/gu, "")]) {
     await formControlFill(control, "", timeout);
     await formControlTypeKeys(control, keys, timeout);
-    if (formControlSameText(await control.inputValue({ timeout }), text)) return { shape };
+    if (formControlSameText(await control.inputValue({ timeout }), text))
+      return formControlCommitDate(control, shape, date, options, timeout);
   }
   throw formControlFailure("not_committed");
 };
