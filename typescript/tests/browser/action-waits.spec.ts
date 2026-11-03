@@ -553,6 +553,48 @@ test.describe("outcome race after an action", () => {
     });
   });
 
+  test("a dialog that wins after the save already answered 201 keeps that response on the result and in the summary", async ({
+    page,
+  }) => {
+    // The save lands, then the site's script, a few ms later, shows an informational alert: the
+    // dialog wins, and the 201 that already matched is still there for the code to check.
+    await site(
+      page,
+      {
+        "/": recordForm(`
+          const answer = await fetch("/api/records", { method: "POST", body: "{}" });
+          const until = Date.now() + 20;
+          while (Date.now() < until);
+          if (answer.ok) alert("Record saved");`),
+      },
+      (request) => (request.method() === "POST" ? { status: 201, body: "{}" } : undefined),
+    );
+    const answer = await race(
+      page,
+      `invalid: { invalid: form }, saved: { response: { method: "POST", url: "/api/records", status: 201 } }, refused: { dialog: true },`,
+      "",
+      `(async () => {
+        const status = result.response?.status() ?? null;
+        const { saved, refused } = result.observations;
+        await result.dialog.dismiss();
+        return { status, saved, refused, summary: waitReport().at(-1).summary };
+      })()`,
+    );
+    expect(answer).toMatchObject({
+      outcome: "refused",
+      kind: "dialog",
+      evidence: { type: "alert", message: "Record saved" },
+      extra: {
+        status: 201,
+        saved: { kind: "response", matched: true },
+        refused: { kind: "dialog", matched: true, seen: 1 },
+        summary: expect.stringMatching(
+          /^waitForOutcome: "refused" \(dialog\) showed after \d+ ms \(\d+ looks?\); "saved" \(response\) also matched; a native alert dialog is left open on the result's dialog; /u,
+        ),
+      },
+    });
+  });
+
   test("a dialog of a type no outcome names keeps the listed order: a response that matched first still wins", async ({
     page,
   }) => {
