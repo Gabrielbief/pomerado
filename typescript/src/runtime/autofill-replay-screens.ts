@@ -332,6 +332,19 @@ const holdShown = <V extends string>(
     });
 };
 
+/**
+ * Whether a screen whose step matched more than one visible element (`ambiguous_match`) waits as a
+ * screen not yet shown does: only once a recorded screen ran, since a page that redraws after a
+ * submit may show the old screen's control beside the new one for a moment, and only before the
+ * wait's deadline (`due`), where it refuses as it would have at once. Nothing is typed or clicked
+ * while a step matches more than one element.
+ */
+const ambiguousWhileRedrawn = <V extends string>(
+  progress: ScreenWaitProgress<V>,
+  refusal: AutofillRefusal,
+  due: boolean,
+) => refusal.reason === "ambiguous_match" && progress.ran.length > 0 && !due;
+
 /** What a screen's wait reads of the replay's input. */
 type ScreenWaitInput<E extends YieldableError, V extends string> = Pick<
   AutofillReplayInput<E, V>,
@@ -349,6 +362,8 @@ const markerHere = <E extends YieldableError, V extends string>({ hooks, recipe 
  * Waits for the recorded stage to become ready, or for evidence of a later stage or landing, and
  * at its deadline lets the challenge gate look for a challenge hiding the screen (`atDeadline`).
  * A value-free check's first screen may end on a login entry that can't tell (`entryCantTell`).
+ * Once a screen ran, a step that matches more than one element waits too, until its deadline
+ * (`ambiguousWhileRedrawn`).
  */
 export const makeReplayScreenWait = <
   E extends YieldableError,
@@ -384,7 +399,8 @@ export const makeReplayScreenWait = <
       if (
         inspected.reason !== "not_found" &&
         inspected.reason !== "not_editable" &&
-        inspected.reason !== "popup_missing"
+        inspected.reason !== "popup_missing" &&
+        !ambiguousWhileRedrawn(progress, inspected, due)
       )
         return { found: inspected } as const;
       if (rejection !== undefined) {
