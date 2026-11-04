@@ -86,8 +86,11 @@ const FillAnswer = Schema.Union(
   Schema.Struct({
     /** `disabled`: the submit was disabled, so the call clicked nothing. */
     submit: Schema.Literal("clicked", "failed", "disabled", "none"),
-    /** A `clicked` submit the call pressed from the keyboard. */
-    via: Schema.optional(Schema.Literal("keyboard")),
+    /**
+     * A `clicked` submit the call pressed from the keyboard, or clicked through the site's own
+     * control laid over it with its name (`click_layer`).
+     */
+    via: Schema.optional(Schema.Literal("keyboard", "click_layer")),
     url: Schema.String,
     navigated: Schema.optional(PageNavigation),
     controls: Schema.optional(PageControls),
@@ -984,7 +987,11 @@ const afterFieldCall = (
  * submits refuses the submit as before.
  * A step that names `dismiss` clicks that covering notice's own control first, when the page shows
  * it, and refuses the step with nothing typed when it is no such control (`dismissNotice`). A
- * click another element caught, which never reached the submit, is `blocked`, with that element
+ * click the site's own control over the submit caught, one with the submit's own accessible name
+ * in its closest form or dialog that holds no field, is clicked through it: the host clicks the
+ * submit's centre with the mouse, as a person does, and reports it `clicked` with
+ * `via: "click_layer"`. Any other click another element caught, which never reached the submit,
+ * is `blocked`, with that element
  * (`blockedBy`): nothing was sent and the fields still hold what was typed, so the minter can name
  * the element's own control as `dismiss` and send the screen again (`resubmitAutofillStep`), which
  * presses the submit from the keyboard only when its click is caught again. On a step that names
@@ -1058,8 +1065,8 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
  * catches again, as one the dismiss did not clear or one with nothing to dismiss, such as a fixed
  * footer, is pressed from the keyboard instead: the host focuses that same submit and presses Enter
  * on it, only once focus landed on it, under the same guard, and reports it `clicked` with
- * `via: "keyboard"`; the element over it is never clicked. When focus goes anywhere else it is
- * `blocked` again.
+ * `via: "keyboard"`; the element over it is never clicked, unless it is the site's own control
+ * over the submit, as a fill clicks it. When focus goes anywhere else it is `blocked` again.
  */
 export const resubmitAutofillStep = (input: CallInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {

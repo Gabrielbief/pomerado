@@ -212,6 +212,13 @@ export const dismissRefusedNotice =
 export const keyboardSubmitNotice =
   "Something sat over the submit and caught the host's click, so the host pressed the same submit from the keyboard instead, and nothing on the covering element was clicked. Explore read-only to read the next screen (never read a field the host filled), then send its signInStep, or signedIn.";
 
+/**
+ * After a step whose submit the host clicked through the site's own control over it
+ * (`via: "click_layer"`).
+ */
+export const clickLayerSubmitNotice =
+  "The site lays its own control, with the same name as the submit, over the submit inside the sign-in form, so the host clicked that control as the submit. Explore read-only to read the next screen (never read a field the host filled), then send its signInStep, or signedIn.";
+
 /** After a step whose submit key the host pressed. */
 const keyNotices = {
   failed:
@@ -236,5 +243,6 @@ export const stepNotice = (
   )
     return keyNotices[stepReport.submit];
   if (stepReport.via === "keyboard") return keyboardSubmitNotice;
+  if (stepReport.via === "click_layer") return clickLayerSubmitNotice;
   return filledNotices[stepReport.submit];
 };
