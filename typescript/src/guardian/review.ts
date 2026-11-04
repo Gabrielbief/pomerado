@@ -1720,8 +1720,8 @@ export const makeGuardian = (
           return yield* new ReviewFailure({ code: "EntrypointNotRead" });
         // A correctable refusal that asks for the owner's confirmation holds this step for it,
         // unless the owner already confirmed it or it is a read the step's own allowed effects
-        // grant; an allowed confirm question that names it records the ask. A final refusal holds
-        // nothing: no answer gets past it.
+        // grant whose refusal rests on those effects; an allowed confirm question that names it
+        // records the ask. A final refusal holds nothing: no answer gets past it.
         const rationale: unknown = Reflect.get(decision, "rationale");
         if (
           kind === "execution" &&
