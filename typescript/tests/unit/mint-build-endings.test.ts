@@ -176,6 +176,10 @@ it("ends a build whose site is temporarily down as site_unavailable", async () =
   );
   expect(offered).toContain("site_unavailable when the site is temporarily down for the failing input");
   expect(offered).toContain("never a 5xx answer only to the request the tool made");
+  // One record the site can't offer now, or an optional part's control failing, is no outage.
+  expect(offered).toMatch(
+    /is the site's answer for that record, not an outage.*is not the site being down: prefer leaving that part/,
+  );
   expect(f.requests).toHaveLength(1);
 });
 
