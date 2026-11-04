@@ -196,6 +196,8 @@ interface AutofillRecordedStep {
   readonly submitVia?: AutofillRecipeStep["submitVia"];
   /** A two-factor method choice's recorded methods. */
   readonly methods?: AutofillRecipeStep["methods"];
+  /** The picked method's `option`, with `submit`, when it was chosen from a native select. */
+  readonly option?: string;
   /** The password an earlier screen took that this one asked for again beside a second factor. */
   readonly refills?: AutofillRecipeStep["refills"];
   /** The covering notice's own control the host clicks on this screen (`AutofillStep.dismiss`). */
@@ -455,6 +457,7 @@ const armScreened = (
     ...(step.submit === undefined ? {} : { submit: step.submit }),
     ...(step.submitKey === undefined ? {} : { submitKey: step.submitKey }),
     ...(step.methods === undefined ? {} : { methods: step.methods }),
+    ...(step.option === undefined ? {} : { option: step.option }),
     ...(step.dismiss === undefined ? {} : { dismiss: step.dismiss }),
     page: inspection.page,
   });

@@ -7,6 +7,11 @@ export type SignInMethod = typeof SignInMethod.Type;
 /** `SignInMethod` or a recovery code; see `signInMethodChoices`. The shared contract's choice. */
 export const SignInMethodChoice = Schema.Literal(...signInMethodChoices);
 export type SignInMethodChoice = typeof SignInMethodChoice.Type;
+/**
+ * The value a native select lists for a sign-in method, when that select is the method's control:
+ * the host chooses it with the browser's own select action, which fires the page's change handler.
+ */
+export const MethodOption = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000));
 
 /**
  * How a `date_of_birth` field takes the date: a whole date in one of these layouts, or, for a
