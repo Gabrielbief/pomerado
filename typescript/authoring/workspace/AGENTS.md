@@ -313,8 +313,7 @@ finding's `id`, so Guardian reviews the question against the finding.
 
 When Guardian sends a question back with `question_rejected`, reword it as the rationale says and
 ask again once, with the same question ids. Drop it when the result's `questionNeeded` is false,
-when the rationale says plainly that no question is needed, or when Guardian sends the reworded
-question back too.
+or when the rationale says plainly that no question is needed.
 
 When nobody answers before the question expires, `request_input` returns `no_answer`. Decide
 how to go on without it: continue with a sensible default and list it in `finish_build`

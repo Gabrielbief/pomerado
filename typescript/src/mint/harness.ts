@@ -1187,8 +1187,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       const confirmAsks = new Map<string, string>();
       /**
-       * The ids of questions Guardian already sent back once for other words. Each is asked again
-       * at most once: after a second rewording, the minter goes on without it.
+       * The ids of questions Guardian already sent back once for other words. Sent back again, one
+       * is asked again only while the latest review's label says a question is still needed.
        */
       const rewordedQuestions = new Set<string>();
       /**
@@ -6954,17 +6954,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 // The read-or-write question is the turn's only move, so it is never withdrawn.
                 // Any other is asked again in other words unless Guardian found none needed.
                 if (review.outcome !== "allow_business") {
-                  // A question already reworded once is not asked again in other words.
+                  // The latest review's label decides, even for a question reworded before: one
+                  // still needed is asked again, and the attempt's model calls bound the rounds. A
+                  // question reworded before whose latest label names no rule is not asked again.
                   const ids = submitted.questions.map((question) => question.id);
                   const rewordedBefore = ids.some((id) => rewordedQuestions.has(id));
                   if (!effectQuestion) for (const id of ids) rewordedQuestions.add(id);
+                  const unlabelled = review.label === undefined || review.label === "other";
                   const questionNeeded = effectQuestion
                     ? undefined
-                    : rewordedBefore
-                      ? false
-                      : review.label === undefined || review.label === "other"
-                        ? undefined
-                        : !questionNotNeededLabels.includes(review.label);
+                    : unlabelled
+                      ? rewordedBefore
+                        ? false
+                        : undefined
+                      : !questionNotNeededLabels.includes(review.label);
                   return JSON.stringify({
                     status: "question_rejected",
                     rationale,
@@ -6974,7 +6977,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ? "Reword the question using the rationale and call request_input again. This read-or-write question is required, and no other tool opens until the person answers it. The host sets its two answer labels, so change only the prompt."
                       : questionNeeded === true
                         ? "Guardian wants this question in other words: the owner still needs to answer it. Call request_input again, once, with the question reworded as the rationale says and the same question ids; do not drop it. The reworded question is reviewed again."
-                        : rewordedBefore
+                        : rewordedBefore && unlabelled
                           ? "Guardian sent this question back again after it was reworded once, so it is not asked again. Go on without asking it, using what the rationale says, and do not ask it again in other words."
                           : questionNeeded === false
                             ? "Guardian found no question needed: the rationale says why, such as an answer you already have or the default the step keeps. Continue without asking it, and do not ask it again in other words."
