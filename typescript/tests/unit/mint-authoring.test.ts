@@ -1426,7 +1426,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["b5c7ec3a8dc02db0e31db234241848346fa909d731c0bcb3efc430de6d0d48cf", "search"],
-    ["254072c5e1e431a4f3f8e57e6c13724169996e24febc0e31c0b57697754f62ba", "workspace/AGENTS.md"],
+    ["5a6d98e01feeff730a384ad811b178a46e0972163194a460697a01cd65ff73e6", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

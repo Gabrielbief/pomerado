@@ -2797,12 +2797,12 @@ it("tells the agent to ask a rejected read-or-write question again, never to wit
 
 // A reword came back as "reword the question, or withdraw it", and builders dropped questions the
 // owner needed to answer. Guardian's label now says whether a question is still needed.
-it("tells the minter to ask a reworded question again, once, unless Guardian found none needed", async () => {
+it("tells the minter to ask a reworded question again unless Guardian found none needed", async () => {
   const responses: Record<string, unknown>[] = [];
   const asks = [
     { id: "account", label: "unclear" },
-    // The same question sent back again after its one rewording.
-    { id: "account", label: "unclear" },
+    // The same question sent back again after its rewording, with no label.
+    { id: "account", label: undefined },
     { id: "plan", label: "repeat" },
     { id: "region", label: undefined },
   ] as const;
@@ -2833,11 +2833,53 @@ it("tells the minter to ask a reworded question again, once, unless Guardian fou
   );
   // A question that needs other words is asked again; one Guardian found unneeded is not.
   expect(responses[0]).toMatchObject({ questionNeeded: true });
-  // It is asked again once: sent back after that, the minter goes on without it.
+  // Sent back again with no label that says it is still needed, the minter goes on without it.
   expect(responses[1]).toMatchObject({ questionNeeded: false });
   expect(responses[2]).toMatchObject({ questionNeeded: false });
   // An older reviewer gives no label, so the rationale alone says which.
   expect(responses[3]).not.toHaveProperty("questionNeeded");
+});
+
+// Guardian reworded a needed question under a no-question label, then reworded the minter's new
+// wording as unclear. The host had stopped the question for good after one rewording, so the
+// owner was never asked and the build ended without a tool.
+it("asks a reworded question again while Guardian's latest label says it is still needed", async () => {
+  const responses: Record<string, unknown>[] = [];
+  const reviews = [
+    { outcome: "reword", label: "readable", rationale: "Reword to: Which shorter default?" },
+    { outcome: "reword", label: "unclear", rationale: "Reword to: Name the default plainly." },
+    { outcome: "allow_business", rationale: "Only the owner knows the default." },
+  ] as const;
+  let reviewed = 0;
+  let asked = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const ask = () => turn.actions.requestInput(textQuestion("Which default?", "default"));
+        responses.push(
+          JSON.parse(yield* ask()),
+          JSON.parse(yield* ask()),
+          JSON.parse(yield* ask()),
+        );
+      }),
+    {
+      reviewQuestion: () => Effect.sync(() => reviews[reviewed++] ?? reviews[2]),
+      askInput: () =>
+        Effect.sync(() => {
+          asked++;
+          return { default: { type: "text" as const, value: "Short default." } };
+        }),
+    },
+  );
+  await f.run();
+  expect(responses[1]).toMatchObject({
+    status: "question_rejected",
+    questionNeeded: true,
+    instruction: expect.stringContaining("Guardian wants this question in other words") as unknown,
+  });
+  expect(reviewed).toBe(3);
+  expect(asked).toBe(1);
+  expect(responses[2]).not.toMatchObject({ status: "question_rejected" });
 });
 
 // The question review didn't know a build was a write build, so it rejected the true statement
