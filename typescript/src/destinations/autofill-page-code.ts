@@ -150,7 +150,8 @@ return {
  * something, so typing that went to another element never leads to a click.
  * - `focus`: empties the field when it holds something and focuses it, then reads that the field
  *   itself holds the focus, inside a shadow root too (`holdsFocusCode`), and names the tag of the
- *   element that holds it otherwise.
+ *   element that holds it otherwise. A field that takes no typing, as a code box the page has not
+ *   switched on yet, it neither empties nor focuses, and says so (`editable: false`).
  * - `date`: fills a date of birth with the authoring library's `fillDate`, which needs the page's
  *   own options, so this call's code holds the date (`iso`).
  * - `dismiss`: clicks a covering notice's own control (`dismissCode`).
@@ -674,6 +675,10 @@ const fillCallBody = (call: AutofillFillCall) => {
     return `const field = fields[${call.index}].locator;
 const fieldLocated = located.fields[${call.index}];
 const question = fields[${call.index}].question;
+// A code box the page has not switched on yet takes no typing: the call empties and focuses
+// nothing, and the host calls again while the page may still switch it on.
+if (!fields[${call.index}].target.editable)
+  return { focused: false, unfocused: { editable: false }, located: fieldLocated, url: primary.url() };
 try {
   // A row of code boxes that still holds a refused code is emptied first, last box first, by each
   // input's own value setter and an input event: no focus and no key a widget moves the focus on.
