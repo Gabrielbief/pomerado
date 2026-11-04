@@ -152,7 +152,9 @@ return {
  * - `focus`: empties the field when it holds something and focuses it, then reads that the field
  *   itself holds the focus, inside a shadow root too (`holdsFocusCode`), and names the tag of the
  *   element that holds it otherwise. A field that takes no typing, as a code box the page has not
- *   switched on yet, it neither empties nor focuses, and says so (`editable: false`).
+ *   switched on yet, it neither empties nor focuses, and says so (`editable: false`). Nor does it
+ *   touch the box an earlier screen of the sign-in typed this same value into while that box still
+ *   holds something (`kept`).
  * - `date`: fills a date of birth with the authoring library's `fillDate`, which needs the page's
  *   own options, so this call's code holds the date (`iso`).
  * - `dismiss`: clicks a covering notice's own control (`dismissCode`).
@@ -195,6 +197,17 @@ export type AutofillFillCall =
        * types the fresh code.
        */
       readonly emptyBoxes?: readonly number[];
+      /**
+       * Once the field takes the focus, the call leaves this mark on it in its isolated world,
+       * never as an attribute, holding the field's document: the sign-in's record of the box.
+       */
+      readonly mark?: string;
+      /**
+       * The mark an earlier screen's focus call left on the box the host typed this same value
+       * into: when the field is that node, in that document, and still holds something, the call
+       * neither empties nor focuses it and answers `kept`. Lengths only, never a value.
+       */
+      readonly kept?: string;
     }
   | {
       readonly kind: "date";
@@ -717,7 +730,14 @@ const question = fields[${call.index}].question;
 if (!fields[${call.index}].target.editable)
   return { focused: false, unfocused: { editable: false }, located: fieldLocated, url: primary.url() };
 try {
-  // A row of code boxes that still holds a refused code is emptied first, last box first, by each
+${
+  call.kept === undefined
+    ? ""
+    : `  // The box an earlier screen of this sign-in typed this same value into, still holding it.
+  if (await field.evaluate((element, mark) => element[mark] === element.ownerDocument && typeof element.value === "string" && element.value.length > 0, ${JSON.stringify(call.kept)}, { timeout: ${elementReadMs} }, true))
+    return { kept: true, located: fieldLocated, url: primary.url(), document: await documentStart() };
+`
+}  // A row of code boxes that still holds a refused code is emptied first, last box first, by each
   // input's own value setter and an input event: no focus and no key a widget moves the focus on.
   // Lengths only, never a value.
   for (const box of ${JSON.stringify([...(call.emptyBoxes ?? [])].reverse())})
@@ -733,7 +753,7 @@ try {
   // Keep this original-node binding in Patchright's isolated world, inaccessible to page code.
   // The tag of the element that holds the focus instead, if another does: the deepest one, read
   // through open shadow roots; a closed root shows only its host.
-  const activeTag = await field.evaluate((element, [key, questionRequired]) => {
+  const activeTag = await field.evaluate((element, [key, questionRequired, mark]) => {
     const holdsFocus = ${holdsFocusCode};
     if (!holdsFocus(element)) {
       let active = element.ownerDocument.activeElement;
@@ -742,11 +762,12 @@ try {
     }
     const binding = { document: element.ownerDocument, frame: element.ownerDocument.defaultView, questionRequired };
     Object.defineProperty(element, key, { value: binding, configurable: true });
+    if (mark !== null) Object.defineProperty(element, mark, { value: element.ownerDocument, configurable: true });
     // Transfer the guard through this frame's isolated world; no value is involved.
     if (questionRequired) Object.defineProperty(element.ownerDocument.defaultView, key, { value: binding, configurable: true });
     element.setAttribute(key, "");
     return null;
-  }, [${JSON.stringify(call.bindingKey)}, question !== undefined], { timeout: ${elementReadMs} }, true);
+  }, [${JSON.stringify(call.bindingKey)}, question !== undefined, ${JSON.stringify(call.mark ?? null)}], { timeout: ${elementReadMs} }, true);
   if (activeTag === null && question !== undefined) {
     await question.locator.evaluate((element, { key, text }) => {
       const scope = element.ownerDocument.defaultView;

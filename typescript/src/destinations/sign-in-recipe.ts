@@ -33,6 +33,7 @@ import type {
   AutofillStepReport,
 } from "./autofill-step.js";
 import type { CredentialRejectedField, WebsiteCredentials } from "../runtime/authentication.js";
+import type { TypedBox } from "./autofill-fill.js";
 import { recordedScreenPage } from "../runtime/workspace-origin.js";
 
 /**
@@ -226,11 +227,15 @@ export const signInRecipeText = (recipe: SignInRecipe) =>
 export interface SignInBrowser<E> {
   /** Finds the step's controls and judges where they submit, before anything is typed. */
   readonly inspect: (step: AutofillStep) => Effect.Effect<AutofillRefusal | AutofillInspection, E>;
-  /** Fills the step's values into the inspected controls and clicks its submit. */
+  /**
+   * Fills the step's values into the inspected controls and clicks its submit, keeping a box a
+   * run's earlier screen typed the same identifier into when given its record (`typedBoxes`).
+   */
   readonly fill: (input: {
     readonly step: AutofillStep;
     readonly values: readonly string[];
     readonly inspection: AutofillInspection;
+    readonly typedBoxes?: TypedBox[];
   }) => Effect.Effect<AutofillStepReport>;
   /**
    * Clicks again the submit of a screen whose fill reported `blocked`, typing nothing, after the

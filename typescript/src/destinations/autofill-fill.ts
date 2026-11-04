@@ -40,11 +40,22 @@ import {
   type CredentialTypingMode,
   type InsertionRefusal,
 } from "./credential-keyboard.js";
-import { DateOfBirthFormat } from "./autofill-contracts.js";
+import { DateOfBirthFormat, IdentifierKinds } from "./autofill-contracts.js";
 import { PageControls } from "./page-controls.js";
 import { PageNavigation, reportedNavigation } from "./sign-in-redirect.js";
 
 const isDateOfBirthFormat = Schema.is(DateOfBirthFormat);
+const isIdentifierKind = Schema.is(IdentifierKinds);
+
+/**
+ * A box a sign-in's fill typed an identifier into: its slot, the value it typed, and the mark its
+ * focus call left on that very node, in the host's isolated world, which page code never sees.
+ */
+export interface TypedBox {
+  readonly slot: FillSlot;
+  readonly value: string;
+  readonly mark: string;
+}
 
 /** One fill call's answer: a control that moved, an empty field the host typed, or its own. */
 const FillAnswer = Schema.Union(
@@ -74,6 +85,13 @@ const FillAnswer = Schema.Union(
     located: Schema.optional(FoundIn),
     url: Schema.String,
     /** When the primary page's document began loading, read once the field took the focus. */
+    document: Schema.optional(Schema.Number),
+  }),
+  /** The box still holds what an earlier screen of the sign-in typed into it (`kept`). */
+  Schema.Struct({
+    kept: Schema.Literal(true),
+    located: Schema.optional(FoundIn),
+    url: Schema.String,
     document: Schema.optional(Schema.Number),
   }),
   Schema.Struct({
@@ -233,6 +251,8 @@ interface FillProgress {
   typedIn: number | undefined;
   /** The origins `trustSignInUrl` trusted as the host judged again a control the page moved. */
   readonly trusted: Set<string>;
+  /** The sign-in's typed boxes as this fill began (`typedBoxes`): earlier screens' only. */
+  readonly earlier: readonly TypedBox[];
 }
 
 /** The report's `trustedSignInOrigins`, when the fill's own judgments trusted any. */
@@ -396,6 +416,14 @@ interface FillInput extends CallInput {
    * chose holds one of these or `values` (`reportedNavigation`). A first screen's is empty.
    */
   readonly typedBefore?: readonly string[];
+  /**
+   * The open sign-in's record of the identifier boxes its fills typed, which this fill reads and
+   * adds to. A box an earlier fill of the sign-in typed the same value into, that still holds
+   * something on the same document, is kept: the fill neither empties nor types it, since a page
+   * may take a changed identifier as a fresh start, and reports it `filled`. Without it, every
+   * box is emptied and typed.
+   */
+  readonly typedBoxes?: TypedBox[];
   readonly keyboard: CredentialKeyboard;
   /**
    * How each value is typed; `paste` by default. `keyboard` presses a trusted key per character
@@ -789,6 +817,12 @@ const fillField = (
         : isDateOfBirthFormat(field.format)
           ? field.format
           : "YYYY-MM-DD";
+    // An identifier the sign-in keeps a record for: the box an earlier screen typed it into.
+    const tracked = input.typedBoxes !== undefined && isIdentifierKind(field?.slot) && value !== "";
+    const mark = tracked ? `__pomerado_typed_${randomUUID()}` : undefined;
+    const kept = tracked
+      ? progress.earlier.findLast((box) => box.slot === field?.slot && box.value === value)
+      : undefined;
     const call: AutofillFillCall =
       format === undefined
         ? {
@@ -796,6 +830,8 @@ const fillField = (
             index,
             bindingKey,
             ...(index === boxes[0] ? { emptyBoxes: boxes } : {}),
+            ...(mark === undefined ? {} : { mark }),
+            ...(kept === undefined ? {} : { kept: kept.mark }),
           }
         : { kind: "date", index, iso: value, format };
     const changes = { count: 0 };
@@ -814,7 +850,7 @@ const fillField = (
     if ("refusal" in answer || "checked" in answer)
       return stopped(input.step, progress, answer, "field");
     progress.check = [];
-    return yield* afterFieldCall(input, progress, index, answer, bindingKey);
+    return yield* afterFieldCall(input, progress, index, answer, bindingKey, mark);
   });
 
 /**
@@ -853,15 +889,27 @@ const untypedRefusal = (
   );
 };
 
-/** What a field's own call found: a date filled, or a focused field the host now types. */
+/**
+ * What a field's own call found: a date filled, a box kept as an earlier screen typed it, or a
+ * focused field the host now types. A typed identifier joins the sign-in's record under `mark`.
+ */
 const afterFieldCall = (
   input: FillInput,
   progress: FillProgress,
   index: number,
   answer: Exclude<CallAnswer, Stop | { readonly checked: false }>,
   bindingKey: string,
+  mark: string | undefined,
 ): Effect.Effect<AutofillStepReport | undefined> =>
   Effect.gen(function* () {
+    if ("kept" in answer) {
+      // It holds the value this sign-in typed on this document, so the next call checks it.
+      progress.typed = true;
+      progress.typedIn = answer.document;
+      progress.statuses.push("filled");
+      progress.check = [index];
+      return undefined;
+    }
     if ("dated" in answer) {
       // A date's call may have changed the field even when it failed.
       progress.typed = true;
@@ -922,6 +970,7 @@ const afterFieldCall = (
         progress.typedIn = answer.document;
         progress.statuses.push("filled");
         progress.check = [index];
+        if (mark !== undefined && slot !== undefined) input.typedBoxes?.push({ slot, value, mark });
         return undefined;
       }
       // The phone went in, but the field kept other digits: the host types and clicks nothing more.
@@ -1016,6 +1065,7 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
       typedAt: randomUUID(),
       typedIn: undefined,
       trusted: new Set(),
+      earlier: [...(input.typedBoxes ?? [])],
     };
     const notice = yield* dismissNotice(input, progress);
     if (notice.refusal !== undefined) return notice.refusal;
@@ -1084,6 +1134,7 @@ export const resubmitAutofillStep = (input: CallInput): Effect.Effect<AutofillSt
       typedAt: randomUUID(),
       typedIn: undefined,
       trusted: new Set(),
+      earlier: [],
     };
     const notice = yield* dismissNotice(input, progress);
     if (notice.refusal !== undefined) return notice.refusal;
