@@ -1020,6 +1020,12 @@ test("pickValue narrows a list longer than 50 options with its search box once t
   await expect(page.getByRole("button", { name: "Location" })).toHaveText("Location 2500");
   // One page of the whole list, then the search: never scrolled on through it.
   expect(await page.evaluate(() => (window as unknown as { pages: number }).pages)).toBe(1);
+  // A value among the first 50 is still searched for, so an option that ties further down shows.
+  await page.reload();
+  expect(await call(page, `return await pickValue(page.getByRole("button", { name: "Location" }), "Location 20", fast);`)).toMatchObject({
+    result: { picked: true, label: "Location 20", rank: "exact" },
+  });
+  expect(await page.getByLabel("Find location").inputValue()).toBe("Location 20");
 });
 
 test("pickValue waits for the next page a scroll asks for a moment late before calling the list's end", async ({ page }) => {
