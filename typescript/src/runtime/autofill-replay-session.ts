@@ -11,6 +11,7 @@ import {
   type SignInMethodChoice,
 } from "../destinations/autofill-recipe.js";
 import { resolvedPage, type SignInRecipeStep } from "../destinations/sign-in-recipe.js";
+import type { TypedBox } from "../destinations/autofill-fill.js";
 import { signedInCheckOrigin, workspaceHost, workspaceToPin } from "./workspace-origin.js";
 import type {
   AutofillInspection,
@@ -192,6 +193,11 @@ const makeReplaySession = <E extends YieldableError, V extends string, L extends
     checkedOn: undefined as string | undefined,
     /** Whether a recorded screen on its exact origin (the shared host) sent these. */
     exactSent: { identifier: false, credentials: false },
+    /**
+     * The identifier boxes this replay's fills typed, so a later screen that lists the same box
+     * again keeps what it holds (core's fill `typedBoxes`).
+     */
+    typedBoxes: [] as TypedBox[],
   };
   const { sibling, resolvedSteps, matchesRecorded } = workspaceScreens(input, progress);
   const outcome = (reason: string): AutofillReplayOutcome<V> => ({

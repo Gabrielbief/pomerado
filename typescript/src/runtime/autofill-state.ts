@@ -15,6 +15,7 @@ import type {
 } from "../destinations/autofill-step.js";
 import { type AutofillRecipeStep, isSecondFactor } from "../destinations/autofill-recipe.js";
 import type { ControlIdentity } from "../destinations/autofill-page-code.js";
+import type { TypedBox } from "../destinations/autofill-fill.js";
 import { report, type SignInReportContext } from "./sign-in-telemetry.js";
 
 /**
@@ -55,6 +56,8 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
     readonly step: AutofillStep;
     readonly values: readonly string[];
     readonly inspection: AutofillInspection;
+    /** The open sign-in's record of the identifier boxes it typed (core's fill `typedBoxes`). */
+    readonly typedBoxes?: TypedBox[];
   }) => Effect.Effect<AutofillStepReport>;
   /**
    * Clicks again the submit of the open sign-in's `blocked` screen, typing nothing, after its

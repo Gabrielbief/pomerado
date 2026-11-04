@@ -203,7 +203,7 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
     session.firstCause.submitted();
     const stepReport = yield* closedInPlace(
       session,
-      yield* hooks.fill({ step, values: filled, inspection }),
+      yield* hooks.fill({ step, values: filled, inspection, typedBoxes: progress.typedBoxes }),
     );
     yield* timeExecutionStage(
       input.latency,
