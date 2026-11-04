@@ -1611,6 +1611,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       let inputFeedbackReview = recovered?.inputFeedbackReview;
       /** Guardian's finite reason when the latest publication was a completed denial. */
       let publicationDenial = recovered?.publicationDenial;
+      /**
+       * The latest judged live test batch held a case the site blocked, or challenged past the
+       * host's gate, and no finish_build since: the attempt's latest stop on record is the site's,
+       * on a browser the host opened, so a `caller_input` report is refused as
+       * `caller_input_site_block`. In memory: a takeover starts without it.
+       */
+      let testBrowserBlocked = false;
       const destinationEvidenceInstruction = {
         no_route_evidence:
           "This example recorded no route of its own, so there is no route evidence to publish with.",
@@ -3847,6 +3854,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             { reservedFor, failedOnSource },
           );
         }
+        // A site block on a live test's browser is the site's stop, not the caller's, even when
+        // the request says to stop on blocks: that rule is about the tool's own runs. The case
+        // counts neither way toward review.
+        if (reason === "caller_input" && testBrowserBlocked)
+          return refused(
+            "caller_input_site_block",
+            "A site block on a browser the host opened for testing is not caller_input, even when the request says to stop on blocks. That case counts neither way toward review: prefer finish_build with the gap in coverage.",
+          );
         // A caller_input ending stands on its intent citing the caller's own request: a field the
         // task's input holds, or words of the request's instruction. A task update the owner
         // confirmed in an answer is that request too, as the effective task every later review
@@ -5109,6 +5124,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               ...(run.start === undefined ? {} : { start: run.start }),
             })),
           });
+          testBrowserBlocked = judgedRuns.some(
+            ({ judged }) =>
+              judged.verdict === "inconclusive" &&
+              (judged.got === "site_block" || judged.got === "challenge"),
+          );
           yield* reportBestEffort(
             dependencies.diagnostics?.emit("mint.live_tests", {
               cases: selected.length,
@@ -5754,6 +5774,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               if (questionOnly) return yield* new MintFailure({ code: "ScopeDenied" });
               yield* active("publication");
               hostRefusalRepeated = false;
+              // Whatever finish_build answers is the attempt's latest stop now, not a test
+              // browser's site block.
+              testBrowserBlocked = false;
               const write = buildEffect === "write";
               const proposed = yield* decode(PublicationRequest, input).pipe(
                 Effect.tapError(() =>
