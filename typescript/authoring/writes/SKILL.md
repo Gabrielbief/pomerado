@@ -357,10 +357,11 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   through, with the new record's id, already proves it. Return the tool's whole output from the
   step that confirms the write, read from the commit's response or the page it left: the caller
   or the site may cancel, refund or delete the record soon after, and a later read-back then
-  shows less. When a commit
-  step returned without calling `verified()` and its `stateChangingRequests` list the commit
-  request with a 2xx or 3xx status, prefer confirming it in the next step from the page as
-  it stands. Make no execute
+  shows less. In the same call as the click, read a success message that disappears on its
+  own. When a commit step returned without calling `verified()` and its `stateChangingRequests`
+  list the commit request with a 2xx or 3xx status, prefer confirming it in the next step from
+  that response, with no error in its body or on the page as it stands, over waiting for a
+  message that may be gone. Make no execute
   call after `verified()`: a later call reopens the effect. After the confirming step,
   further `act` steps are refused.
 - Prefer confirming the final commit with `confirmCommit(answer, page)`: import
