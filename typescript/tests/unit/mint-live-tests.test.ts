@@ -1523,6 +1523,65 @@ it("never counts a case the site blocked on the browser's egress against the too
   expect(published.seen[0]?.coverage).toContain("3 pass, 1 fail, 1 inconclusive;");
 });
 
+// A request that says to stop at blocks speaks of the tool's own runs, not of a test browser the
+// host opened on its own exit, so a site block there never ends the build as caller_input.
+it("refuses caller_input after the site blocked a test browser, and the build goes on to publish", async () => {
+  const { host } = liveTestHost({
+    "sort-price": { status: "inconclusive", reason: "site_block" },
+    nothing: { status: "completed", output: { results: [], has_next_page: false, next_cursor: null } },
+  });
+  const published = publications();
+  const f = await fixture(
+    (_request, index) =>
+      [
+        // Two lanes: only the second lane's first case, sort-price, runs cold.
+        call("live_tests", { ...runAll, maxWorkers: 2 }, "run"),
+        call("execute", example, "example"),
+        call(
+          "report_blocked",
+          {
+            reason: "caller_input",
+            explanation: "The site blocked one test search, and the request says to stop at a block.",
+            intent: "The request says if the site shows a robot check, stop without getting around it.",
+          },
+          "blocked",
+        ),
+        call("finish_build", finish, "finish"),
+      ][index] ?? prose(),
+    {
+      liveTests: host,
+      deadline: Deadline.after(30 * 60_000),
+      reviewAndExecute: completedExample,
+      publish: published.publish,
+    },
+    {
+      ...read,
+      intent:
+        "Search the catalog for a query. If the site shows a robot check or blocks access, stop without getting around it.",
+    },
+  );
+  const root = (f.workspace as unknown as { root: string }).root;
+  await writeWorkspace(root, {
+    "src/tool.ts": toolSource,
+    "test/cases.json": JSON.stringify(withPassing(cases, 1)),
+  });
+  const outcome = await f.run();
+
+  const ran = resultOf(f.requests[1], "run")["cases"] as { id: string; status: string }[];
+  expect(ran.filter((testCase) => testCase.status === "pass")).toHaveLength(4);
+  expect(ran.find((testCase) => testCase.id === "sort-price")).toMatchObject({
+    status: "inconclusive",
+    got: "site_block",
+    start: "cold",
+  });
+  expect(resultOf(f.requests[3], "blocked")).toMatchObject({
+    status: "blocked_refused",
+    reason: "caller_input_site_block",
+  });
+  expect(published.seen).toHaveLength(1);
+  expect(outcome.build).toBe("published");
+});
+
 it("runs nothing when Guardian denies the batch, and says why", async () => {
   const { host, batches } = liveTestHost(
     {},
