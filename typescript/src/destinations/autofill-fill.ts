@@ -428,18 +428,18 @@ interface FillInput extends CallInput {
   /**
    * How each value is typed; `paste` by default. `keyboard` presses a trusted key per character
    * (`InsertionOptions.trustedKeys`), the retype below included, for every slot but the
-   * `pastedSlots`.
+   * `pastedSlots`: a one-time code too, one key into each box of a code split across boxes.
    */
   readonly typing?: CredentialTypingMode;
 }
 
 /**
  * The slots `typing: "keyboard"` still pastes, since their boxes commonly reformat or move on as a
- * person types: a one-time code, a phone number, a card's number and expiry, and a date of birth.
- * Every other slot is typed key by key.
+ * person types: a phone number, a card's number and expiry, and a date of birth. Every other slot
+ * is typed key by key, a one-time code included: one key into each box of a code split across
+ * boxes, as a person types it, each box focused and checked before its key.
  */
 const pastedSlots: ReadonlySet<FillSlot | undefined> = new Set<FillSlot>([
-  "code",
   "phone",
   "card_number",
   "card_expiry",
@@ -994,7 +994,8 @@ const afterFieldCall = (
  * judging every control again before each call acts. Kernel calls
  * focus and bind each field and click; the host inserts each value atomically into that original
  * node over its own encrypted DevTools socket (`keyboard`), or with `typing: "keyboard"` presses a
- * trusted key per character into it there for each slot but the `pastedSlots`, so no value but a
+ * trusted key per character into it there for each slot but the `pastedSlots`, a one-time code
+ * included, one key per box of a code split across boxes, so no value but a
  * date of birth ever enters a Kernel call's script text or its request to Kernel's REST API. It reports per-field outcomes and never a
  * value. Once anything was typed, a call that fails or finds a control refused can no longer say
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
