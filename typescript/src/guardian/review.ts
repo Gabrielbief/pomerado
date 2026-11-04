@@ -41,6 +41,7 @@ import {
 } from "effect";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
 import type { WritePath } from "../mint/contracts.js";
+import { explorationAllowedEffect } from "../mint/exploration-effect.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
 import type { GuardianReasoningEffort } from "./model.js";
 import type { PromptCacheDiagnostic } from "../models/cached-instructions.js";
@@ -940,8 +941,10 @@ const knownRefusal = (raw: unknown): unknown => {
  * true, since the host itself refuses before review any run it does not permit, committing a
  * listed write again for a step the review labels a read, which changes nothing, missing write
  * authority for a step whose own authority grants the write (`writeAuthority`), such as an act step
- * reviewed right after a read-only explore, or missing confirmation for the very step the owner
- * confirmed (`confirmed`). Undefined for any other decision.
+ * reviewed right after a read-only explore, missing confirmation for the very step the owner
+ * confirmed (`confirmed`), or missing confirmation for a step the review labels a read whose own
+ * allowed effects are the host's read grant (`explorationAllowedEffect`). Undefined for any other
+ * decision.
  */
 const settledGroundOf = (
   pending: PendingExecution,
@@ -956,7 +959,13 @@ const settledGroundOf = (
   if (ground === "retry_permission" && pending.mintContext?.repeatableRead === true) return ground;
   if (ground === "committed_write" && Reflect.get(raw, "action") === "read") return ground;
   if (ground === "write_authority" && pending.writeAuthority === true) return ground;
-  if (ground === "owner_confirmation" && confirmed !== undefined) return ground;
+  if (
+    ground === "owner_confirmation" &&
+    (confirmed !== undefined ||
+      (Reflect.get(raw, "action") === "read" &&
+        pending.allowedEffects.includes(explorationAllowedEffect)))
+  )
+    return ground;
   return undefined;
 };
 
@@ -971,6 +980,13 @@ const settledGroundCorrection: Record<GuardianRefusalGround, string> = {
   owner_confirmation:
     "The host did not accept this refusal: it rests on this step needing the owner's confirmation, and trusted_authority.ownerConfirmedStep shows the owner already confirmed exactly this step, the one an earlier review held for that confirmation, with the same code and input. That answer authorizes this step, and it needs no task update. Decide again without missing confirmation as a ground. Refuse it still, with refusal final, only when the step weakens security or safety in a way no answer authorizes, and say which.",
 };
+
+/**
+ * What the host tells Guardian, once in the same review, about a refusal that holds for the
+ * owner's confirmation a read the step's own allowed effects grant.
+ */
+const grantedReadCorrection =
+  "This step's trusted_authority.allowedEffects grant authorized reads, and you labelled the step a read. A read those effects grant needs no owner confirmation. Prefer allowing it, or name the read's real problem.";
 
 /**
  * The decision a review ends with after the host sent back a refusal on a settled ground. A
@@ -1645,7 +1661,9 @@ export const makeGuardian = (
             if (settled !== undefined) {
               groundPushback = { ground: settled, refused: output as object };
               followUpRounds++;
-              return settledGroundCorrection[settled];
+              return settled === "owner_confirmation" && confirmedStep === undefined
+                ? grantedReadCorrection
+                : settledGroundCorrection[settled];
             }
             if (!unread(output) || readRounds >= requiredReadRounds) return undefined;
             readRounds++;
@@ -1691,8 +1709,9 @@ export const makeGuardian = (
         if (requireEntrypoint && decision.outcome === "allow" && entrypointReadAt !== epoch())
           return yield* new ReviewFailure({ code: "EntrypointNotRead" });
         // A correctable refusal that asks for the owner's confirmation holds this step for it,
-        // unless the owner already confirmed it; an allowed confirm question that names it records
-        // the ask. A final refusal holds nothing: no answer gets past it.
+        // unless the owner already confirmed it or it is a read the step's own allowed effects
+        // grant; an allowed confirm question that names it records the ask. A final refusal holds
+        // nothing: no answer gets past it.
         const rationale: unknown = Reflect.get(decision, "rationale");
         if (
           kind === "execution" &&
@@ -1702,6 +1721,7 @@ export const makeGuardian = (
           typeof raw === "object" &&
           raw !== null &&
           Reflect.get(raw, "refusalGround") === "owner_confirmation" &&
+          settledGroundOf(pending, raw, confirmedStep) === undefined &&
           typeof rationale === "string"
         ) {
           const step = yield* stepIdentity(pending, readSource);
