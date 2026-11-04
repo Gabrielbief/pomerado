@@ -164,7 +164,8 @@ return {
  *   step's inspection found them, which the page kept under `inspection`, the submission's method
  *   as judged, and how each field's secret is found by value, if it is one), reads the page's
  *   alert text when the host counts new alerts (`alertsBefore`), clicks the submit (or, for a step
- *   with a submit key, presses that key in its last field, which stands as the submit), clicks the
+ *   with a submit key, presses that key in its last field, which stands as the submit, and for a
+ *   method chosen from a native select, chooses the step's `option` there), clicks the
  *   submit's centre with the mouse when the element there is the site's own control over the
  *   submit with its name (`clickLayerCode`), on a click another element caught or first when the
  *   step says to (`submitVia`), or presses Enter on the submit itself once focus landed on it, when
@@ -926,8 +927,11 @@ const clickLayer = async () => {
   return true;
 };
 try {
+  // A method chosen from a native select: the browser's own select action, which fires the page's
+  // change handler.
+  if (submitOption !== null) await submit.locator.selectOption({ value: submitOption }, { timeout: 5000 });
   // A submit key goes to the last field, which stands as the submit and submits its own form.
-  if (submitKey !== null) await submit.locator.press(submitKey, { timeout: 5000 });
+  else if (submitKey !== null) await submit.locator.press(submitKey, { timeout: 5000 });
   else if (
     !(
       (submitVia === "keyboard" && (await pressSubmit())) ||
@@ -1107,6 +1111,7 @@ export const autofillStepCode = (
     readonly submit?: string | undefined;
     readonly submitKey?: string | undefined;
     readonly submitVia?: string | undefined;
+    readonly option?: string | undefined;
     readonly popup?: AutofillPopup | undefined;
   },
   observed: string,
@@ -1139,6 +1144,7 @@ const codeSlots = ${JSON.stringify(step.fields.map((field) => field.slot === "co
 const submitSelector = ${JSON.stringify(step.submit ?? null)};
 const submitKey = ${JSON.stringify(step.submitKey ?? null)};
 const submitVia = ${JSON.stringify(step.submitVia ?? null)};
+const submitOption = ${JSON.stringify(step.option ?? null)};
 // Every control is found first, then read in one pass (readControls). A control that is not found
 // ends the call at once, after the no-wait read of the ones found before it (checkReads).
 const foundFields = [];
@@ -1171,6 +1177,15 @@ const submit =
 // enabled once the fields hold input; the submit call never clicks it while it is disabled.
 if (submit !== null && submit.inert)
   return { error: "not_editable", target: "submit", located: submit.located, url: primary.url() };
+// A method chosen from a native select: the select must list its option, or nothing is chosen.
+if (
+  submitOption !== null &&
+  submit !== null &&
+  !(await submit.locator
+    .evaluate((element, value) => element instanceof HTMLSelectElement && Array.from(element.options).some((option) => option.value === value), submitOption, { timeout: ${elementReadMs} })
+    .catch(() => false))
+)
+  return { error: "not_found", target: "submit", located: submit.located, url: primary.url() };
 const located = { fields: fields.map((field) => field.located), submit: submit === null ? null : submit.located };
 ${fill === undefined ? inspectCode : fillCallCode(fill.call, fill.judged, fill.check, fill.typedAt)}`;
 

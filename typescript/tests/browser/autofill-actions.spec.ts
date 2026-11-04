@@ -211,6 +211,36 @@ test("a fieldless anchor choice sends only the chosen verification method", asyn
   expect(received.map((form) => Object.fromEntries(form))).toEqual([{ method: "sms" }]);
 });
 
+test("a method choice in a native drop-down chooses the method's option", async ({ page }) => {
+  const received = await serve(
+    page,
+    `<label>Send my code by<select id="method" name="method" onchange="document.getElementById('code-box').hidden = this.value === ''">
+<option value="">Choose a method</option><option value="app">Authenticator app</option><option value="mail">Email</option>
+</select></label>
+<p id="code-box" hidden><label>Code<input id="code" name="code"></label><button>Verify</button></p>`,
+    false,
+  );
+  const methods: AutofillStep["methods"] = [
+    { method: "totp", selector: "#method", option: "app" },
+    { method: "email", selector: "#method", option: "mail" },
+  ];
+  // An option the drop-down does not list is refused before anything is chosen.
+  expect(
+    await inspect(page, { fields: [], methods, submit: "#method", option: "sms" }),
+  ).toMatchObject({ outcome: "refused", reason: "not_found", target: "submit" });
+  const step: AutofillStep = { fields: [], methods, submit: "#method", option: "app" };
+  const inspection = await inspect(page, step);
+  if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
+  expect(await fill(page, inspection, step, [])).toMatchObject({
+    outcome: "filled",
+    fields: [],
+    submit: "clicked",
+  });
+  expect(await page.locator("#method").inputValue()).toBe("app");
+  await expect(page.locator("#code")).toBeVisible();
+  expect(received).toEqual([]);
+});
+
 for (const [name, control, reason] of [
   [
     "off-site anchor",

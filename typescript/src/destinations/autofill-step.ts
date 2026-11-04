@@ -134,8 +134,9 @@ export interface AutofillStepRequest {
   /** Enter, pressed in the last field to submit its form, on a form with no submit control. */
   readonly submitKey?: SubmitKey | undefined;
   /** A two-factor method choice: every method offered, and `submit` the one picked. */
-  readonly methods?:
-    readonly { readonly method: SignInMethodChoice; readonly selector: string }[] | undefined;
+  readonly methods?: AutofillStep["methods"];
+  /** The picked method's `option`, when it is chosen from a native select (`AutofillStep`). */
+  readonly option?: string | undefined;
   /** The own close, reject or accept control of a notice that covers the screen (`AutofillStep`). */
   readonly dismiss?: string | undefined;
 }
@@ -153,9 +154,23 @@ export interface AutofillStep<Slot extends FillSlot = AutofillSlot> {
   readonly submit?: string | undefined;
   /** Enter, pressed in the last field to submit its form; never with `submit`. */
   readonly submitKey?: SubmitKey | undefined;
-  /** A two-factor method choice: every method offered, and `submit` the one picked. */
+  /**
+   * A two-factor method choice: every method offered, and `submit` the one picked. A method
+   * chosen from a native select names that select and the value it lists for the method
+   * (`option`).
+   */
   readonly methods?:
-    readonly { readonly method: SignInMethodChoice; readonly selector: string }[] | undefined;
+    | readonly {
+        readonly method: SignInMethodChoice;
+        readonly selector: string;
+        readonly option?: string | undefined;
+      }[]
+    | undefined;
+  /**
+   * The picked method's `option`: the host chooses it in the submit, a native select, with the
+   * browser's own select action, and refuses a select that does not list it (`not_found`).
+   */
+  readonly option?: string | undefined;
   /**
    * The own close, reject or accept control of a cookie, consent or similar notice that covers the screen,
    * which the host clicks before it types, when the page shows it, and again before it clicks the

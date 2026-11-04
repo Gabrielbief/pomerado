@@ -37,6 +37,7 @@ import {
   IdentifierKinds,
   maximumCodeBoxes,
   maximumStepFields,
+  MethodOption,
   PhoneFormat,
   PrivateIdentifierLabel,
   onePrivateIdentifier,
@@ -717,14 +718,21 @@ export const SignInStep = Schema.Union(
     submitKey: Schema.optional(SubmitKey),
     /**
      * A two-factor method choice: every method the screen offers, each with the control that
-     * picks it, and `submit` the one to pick now. Runs pick again from these.
+     * picks it, and `submit` the one to pick now. A method chosen from a native select names that
+     * select and the value it lists for the method (`option`), and the step names the one to pick
+     * now as its own `option`. Runs pick again from these.
      */
     methods: Schema.optional(
-      Schema.Array(Schema.Struct({ method: SignInMethodChoice, selector: SignInSelector })).pipe(
-        Schema.minItems(1),
-        Schema.maxItems(8),
-      ),
+      Schema.Array(
+        Schema.Struct({
+          method: SignInMethodChoice,
+          selector: SignInSelector,
+          option: Schema.optional(MethodOption),
+        }),
+      ).pipe(Schema.minItems(1), Schema.maxItems(8)),
     ),
+    /** A method choice's `option` to pick now, when its methods are a native select's options. */
+    option: Schema.optional(MethodOption),
     /**
      * The own control of a cookie or tracking consent banner that shows on this screen: its close
      * or dismiss control, else one that rejects what is not essential, else accept when that is
@@ -757,12 +765,14 @@ export const SignInStep = Schema.Union(
     ),
     Schema.filter(
       (step) =>
-        step.methods === undefined ||
+        (step.methods === undefined && step.option === undefined) ||
         (step.fields.length === 0 &&
-          step.methods.some((option) => option.selector === step.submit)),
+          (step.methods ?? []).some(
+            (method) => method.selector === step.submit && method.option === step.option,
+          )),
       {
         message: () =>
-          "a method choice fills no field, and its submit is the selector of one of its methods",
+          "a method choice fills no field, and its submit and option are one of its methods' selector and option",
       },
     ),
   ),

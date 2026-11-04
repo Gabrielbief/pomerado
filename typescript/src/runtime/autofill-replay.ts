@@ -89,7 +89,10 @@ const shownScreen = (step: AutofillStep, inspection: AutofillInspection): ShownS
   inspection,
 });
 
-/** The recorded screen as it runs now: a method choice clicks the method this run picks. */
+/**
+ * The recorded screen as it runs now: a method choice clicks the method this run picks, or
+ * chooses its option in a native select.
+ */
 const screenFor = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   replay: Replay<E, V, L>,
   recorded: SignInRecipeStep,
@@ -129,6 +132,8 @@ const screenFor = <E extends YieldableError, V extends string, L extends Autofil
     return {
       fields: [],
       submit: picked.selector,
+      // A method chosen from a native select: the host chooses its option there.
+      ...(picked.option === undefined ? {} : { option: picked.option }),
       ...(recorded.popup === undefined ? {} : { popup: recorded.popup }),
     };
   });

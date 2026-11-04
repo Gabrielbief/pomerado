@@ -228,6 +228,10 @@ attribute.
   method order above. The tool's runs pick again from that list. A method's selector
   publishes with the tool, so it never names the masked phone number or address the option shows
   (such as `***-1234`): use the method's own words or a stable attribute.
+  A method choice in a native drop-down (a `select`) names the drop-down as each method's selector
+  and as `submit`, the value it lists for each method as that method's `option`, and the one to
+  pick now as the step's own `option`; the host chooses that option. Prefer this over clicking the
+  drop-down.
 - `submitKey: "Enter"`, in place of `submit`: a code or password screen whose form has no submit
   control and submits on Enter. The host presses Enter in the step's last field.
 - Every selector and submit you send publishes with the tool, as does each screen's page address.
