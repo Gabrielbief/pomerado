@@ -1108,21 +1108,21 @@ describe("the publication policy", () => {
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
   });
 
-  // A caller's number limit beyond a range control's end, or between its steps, can still be
-  // applied: the control's end or the nearest step inside the bound answers it. Refusing it as
-  // invalid input is a wrong failure.
-  it("finds an InvalidInput thrown on a number limit a range control can apply", () => {
+  // A caller's number limit beyond a stepped scale's end, or between its steps, can still be
+  // applied in a read: the scale's end or the nearest step inside the bound answers it. Refusing
+  // it as invalid input is a wrong failure.
+  it("finds a read's InvalidInput thrown on a number limit a stepped scale can apply", () => {
     const wrongFailure = publicationOutputPolicy.slice(
       publicationOutputPolicy.indexOf("Wrong failure:"),
       publicationOutputPolicy.indexOf("Strict name check:"),
     );
     expect(wrongFailure).toContain(
-      "So is an InvalidInput thrown because a caller's number limit lies beyond a range control's end or between its steps: prefer setting the control's end, or the nearest step inside the caller's bound, and returning the applied value.",
+      "So is a read's InvalidInput thrown because a caller's number limit lies beyond a stepped scale's end or between its steps: prefer setting the scale's end, or the nearest step inside the caller's bound, and returning the applied value.",
     );
   });
 });
 
-const message =(value: unknown): ModelResponse["output"][number] => ({
+const message = (value: unknown): ModelResponse["output"][number] => ({
   type: "message",
   role: "assistant",
   status: "completed",
