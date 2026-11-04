@@ -27,16 +27,23 @@ const signInStep: AutofillStep = {
 };
 
 /**
- * Serves, at /login, the sign-in dialog with its control over Sign In named `layerName`, and keeps
- * each login the site received.
+ * Serves, at /login, the sign-in dialog with its control over Sign In named `layerName`, and at
+ * /framed the same page in a frame under a parent overlay that notes a click, and keeps each login
+ * the site received.
  */
-const serve = async (page: Page, layerName = "Sign In") => {
+const serve = async (page: Page, layerName = "Sign In", path = "/login") => {
   const received: Record<string, string>[] = [];
   await page.route(`${site}/**`, async (route) => {
     if (route.request().method() === "POST") {
       received.push(Object.fromEntries(new URLSearchParams(route.request().postData() ?? "")));
       await route.fulfill({ contentType: "text/plain", body: "ok" });
-    } else
+    } else if (route.request().url().endsWith("/framed"))
+      await route.fulfill({
+        contentType: "text/html",
+        body: `<iframe src="/login" style="width:600px;height:400px;border:0"></iframe>
+<div style="position:fixed;inset:0" onclick="sessionStorage.setItem('overlay', 'clicked')">Accept all</div>`,
+      });
+    else
       await route.fulfill({
         contentType: "text/html",
         body: `<div role="dialog" aria-label="Sign in" style="position:absolute;top:40px;left:40px">
@@ -56,7 +63,7 @@ const serve = async (page: Page, layerName = "Sign In") => {
 });</script>`,
       });
   });
-  await page.goto(`${site}/login`);
+  await page.goto(`${site}${path}`);
   return received;
 };
 
@@ -79,11 +86,12 @@ const fill = async (page: Page, step: AutofillStep) => {
   );
 };
 
-test("the site's own Sign In control over the real button is clicked as the submit on the first fill, the recipe records it as version 11, and a fresh browser replays it with one post; a control named otherwise stays blocked", async ({
+test("the site's own Sign In control over the real button is clicked as the submit on the first fill, the recipe records it as version 11, and a fresh browser replays it with one post; a control named otherwise, or a sign-in in a frame, stays blocked", async ({
   page,
   browser,
 }) => {
-  // The first fill and the control named otherwise each wait out Playwright's 5 s click timeout.
+  // The first fill, the control named otherwise and the frame each wait out Playwright's 5 s click
+  // timeout.
   test.setTimeout(60_000);
   const received = await serve(page);
   const report = await fill(page, signInStep);
@@ -137,4 +145,11 @@ test("the site's own Sign In control over the real button is clicked as the subm
     blockedBy: { tag: "div" },
   });
   expect(none).toEqual([]);
+
+  // In a frame, a parent page's element over the frame would take the click: blocked, unclicked.
+  const framed = await page.context().newPage();
+  const nothing = await serve(framed, "Sign In", "/framed");
+  expect(await fill(framed, signInStep)).toMatchObject({ outcome: "filled", submit: "blocked" });
+  expect(nothing).toEqual([]);
+  expect(await framed.evaluate(() => sessionStorage.getItem("overlay"))).toBeNull();
 });

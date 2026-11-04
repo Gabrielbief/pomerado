@@ -886,8 +886,10 @@ const pressSubmit = async () => {
 };
 // Clicks the submit's centre as a person's pointer does, only when the site's own control with the
 // submit's name sits there, in the submit's form or dialog (clickLayerCode); false, having
-// clicked nothing, otherwise.
+// clicked nothing, otherwise. Only a submit in the main frame: the check reads the submit's own
+// frame, and a parent page's element over that frame would take a mouse click there instead.
 const clickLayer = async () => {
+  if (submitFrame !== primary.mainFrame()) return false;
   await submitHandle.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
   const layered = await submitHandle.evaluate(${clickLayerCode}).catch(() => false);
   const box = layered ? await submitHandle.boundingBox().catch(() => null) : null;
