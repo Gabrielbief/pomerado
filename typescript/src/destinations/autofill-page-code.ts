@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { formControlsCode } from "../browser/form-controls.js";
+import { accessibleNames } from "./accessible-name.js";
 import { maximumCodeBoxes, type AutofillPopup, type DateOfBirthFormat } from "./autofill-contracts.js";
 import { elementReadMs, locateCode, questionTextCode } from "./autofill-locate-code.js";
 import { clipCode, controlNamingCode } from "./control-naming-code.js";
@@ -160,9 +161,12 @@ return {
  *   step's inspection found them, which the page kept under `inspection`, the submission's method
  *   as judged, and how each field's secret is found by value, if it is one), reads the page's
  *   alert text when the host counts new alerts (`alertsBefore`), clicks the submit (or, for a step
- *   with a submit key, presses that key in its last field, which stands as the submit), or presses
- *   Enter on the submit itself once focus landed on it, when another element caught a click the
- *   host may press past (`pressCovered`) or the step says to (`submitVia`), waits for the page to
+ *   with a submit key, presses that key in its last field, which stands as the submit), clicks the
+ *   submit's centre with the mouse when the element there is the site's own control over the
+ *   submit with its name (`clickLayerCode`), on a click another element caught or first when the
+ *   step says to (`submitVia`), or presses Enter on the submit itself once focus landed on it, when
+ *   another element caught a click the host may press past (`pressCovered`) or the step says to
+ *   (`submitVia`), waits for the page to
  *   settle and reads its controls (`pageControlsCode`), with how many of their alerts did not show
  *   before the click (`newAlerts`) when it read them. A disabled submit it never clicks: it says so
  *   and does nothing, and the host calls again while the page may still enable it.
@@ -237,7 +241,8 @@ export type AutofillFillCall =
       /**
        * When another element catches the click, press the submit from the keyboard instead, once
        * focus lands on it: only on the host's click again of a `blocked` screen. Without it, such a
-       * click is `blocked`, so a covering notice is dismissed first.
+       * click is `blocked`, so a covering notice is dismissed first, unless the element is the
+       * site's own control over the submit with its name, which any call clicks as the submit.
        */
       readonly pressCovered?: true;
     };
@@ -424,6 +429,38 @@ const coveringCode = `(element) => {
   while (cover.parentElement !== null && !page.includes(cover.parentElement) && !cover.parentElement.contains(element))
     cover = cover.parentElement;
   return { tag: String(cover.tagName).slice(0, 40), role: cover.getAttribute("role")?.slice(0, 40) ?? null };
+}`;
+
+/**
+ * Page code: whether the element at the centre of `element`, a submit whose click another element
+ * caught, is the site's own click layer for it, as a site lays a control over its submit to take
+ * a person's click there. It is when that element, or the nearest button, link or `button` role
+ * around it, is neither the submit nor around it, sits in the submit's own closest form or dialog,
+ * holds no field, and carries the submit's own accessible name, trimmed and ignoring case. Only
+ * that answer leaves the page, never a name.
+ */
+const clickLayerCode = `(element) => {
+  const box = element.getBoundingClientRect();
+  if (box.width <= 0 || box.height <= 0) return false;
+  const x = box.left + box.width / 2;
+  const y = box.top + box.height / 2;
+  const root = element.getRootNode();
+  let hit = (typeof root.elementFromPoint === "function" ? root : element.ownerDocument).elementFromPoint(x, y);
+  while (hit?.shadowRoot) {
+    const inner = hit.shadowRoot.elementFromPoint(x, y);
+    if (inner === null || inner === hit) break;
+    hit = inner;
+  }
+  const layer = hit?.closest('button, a, [role~="button"]');
+  if (!layer || layer === element || element.contains(layer) || layer.contains(element)) return false;
+  const scope = (node) => node.closest('form, dialog, [role~="dialog"], [role~="alertdialog"]');
+  const shared = scope(element);
+  if (shared === null || scope(layer) !== shared) return false;
+  if (layer.querySelector("input, select, textarea") !== null) return false;
+  const name = (${String(accessibleNames)})();
+  const named = (node) => name(node).trim().replace(/\\s+/g, " ").toLowerCase();
+  const own = named(element);
+  return own !== "" && named(layer) === own;
 }`;
 
 /**
@@ -827,7 +864,8 @@ primary.on("request", noteHop);
 primary.on("framenavigated", noteCommit);
 let late = false;
 // "keyboard" once the host pressed Enter on the submit itself, which activates it as a click does
-// and which no element over it can catch.
+// and which no element over it can catch; "click_layer" once it clicked the site's own control
+// over the submit as the submit.
 let via = null;
 // Presses the submit from the keyboard only once focus landed on that same element; false, having
 // pressed nothing, when focus went anywhere else.
@@ -846,10 +884,29 @@ const pressSubmit = async () => {
   await submitHandle.press("Enter", { timeout: 5000 });
   return true;
 };
+// Clicks the submit's centre as a person's pointer does, only when the site's own control with the
+// submit's name sits there, in the submit's form or dialog (clickLayerCode); false, having
+// clicked nothing, otherwise.
+const clickLayer = async () => {
+  await submitHandle.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
+  const layered = await submitHandle.evaluate(${clickLayerCode}).catch(() => false);
+  const box = layered ? await submitHandle.boundingBox().catch(() => null) : null;
+  if (box === null) return false;
+  via = "click_layer";
+  navigated = nextNavigation();
+  await primary.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  return true;
+};
 try {
   // A submit key goes to the last field, which stands as the submit and submits its own form.
   if (submitKey !== null) await submit.locator.press(submitKey, { timeout: 5000 });
-  else if (!(submitVia === "keyboard" && (await pressSubmit()))) await submit.locator.click({ timeout: 5000 });
+  else if (
+    !(
+      (submitVia === "keyboard" && (await pressSubmit())) ||
+      (submitVia === "click_layer" && (await clickLayer()))
+    )
+  )
+    await submit.locator.click({ timeout: 5000 });
 } catch (error) {
   // Playwright's click waits, inside its own timeout, for the navigation it started to commit, which
   // a slow chain of redirects can outlast. One whose request for the main frame went out reached
@@ -864,10 +921,15 @@ try {
       ? await submit.locator.evaluate(${coveringCode}, undefined, { timeout: ${elementReadMs} }).catch(() => null)
       : null;
     if (blockedBy === null) return unwatched({ submit: "failed", url: primary.url() });
-    // On a click again, the covered submit is pressed from the keyboard instead; the element over
-    // it is never clicked. Any other call reports it blocked, so a covering notice is dismissed first.
+    // The site's own control over the submit, with its name, in its form or dialog, is clicked as
+    // the submit on any call. Otherwise, on a click again, the covered submit is pressed from the
+    // keyboard instead, and the element over it is never clicked. Any other call reports it
+    // blocked, so a covering notice is dismissed first.
     try {
-      if (!${JSON.stringify(call.pressCovered === true)} || !(await pressSubmit()))
+      if (
+        !(await clickLayer()) &&
+        (!${JSON.stringify(call.pressCovered === true)} || !(await pressSubmit()))
+      )
         return unwatched({ submit: "blocked", blockedBy, url: primary.url() });
     } catch {
       if (!requested) return unwatched({ submit: "failed", url: primary.url() });

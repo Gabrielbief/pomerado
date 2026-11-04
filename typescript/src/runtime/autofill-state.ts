@@ -186,7 +186,10 @@ interface AutofillRecordedStep {
   /** The key the host pressed in the last field to submit its form, on a form with no submit. */
   readonly submitKey?: AutofillRecipeStep["submitKey"];
   readonly submittedBy?: "host" | "minter";
-  /** `keyboard` once the host pressed the screen's covered submit from the keyboard. */
+  /**
+   * `keyboard` once the host pressed the screen's covered submit from the keyboard, `click_layer`
+   * once it clicked through the site's own control over it.
+   */
   readonly submitVia?: AutofillRecipeStep["submitVia"];
   /** A two-factor method choice's recorded methods. */
   readonly methods?: AutofillRecipeStep["methods"];
@@ -506,7 +509,8 @@ export const noteRefill = (state: AutofillSignInState) => {
 /**
  * Records what a fill did once it returns: a field it did not fill is not held as filled, nor a
  * saved security answer typed, a step that reached nothing leaves the recipe, a step the host
- * clicked records it, with `submitVia` when it pressed the submit from the keyboard, and one whose
+ * clicked records it, with `submitVia` when it pressed the submit from the keyboard or clicked
+ * through the site's own control over it, and one whose
  * click another element caught is the open sign-in's `blocked` screen. Returns whether anything
  * reached the page.
  */

@@ -166,11 +166,13 @@ export interface AutofillStep<Slot extends FillSlot = AutofillSlot> {
   readonly dismiss?: string | undefined;
   /**
    * `keyboard`: the host presses the submit from the keyboard rather than clicking it first, as a
-   * recorded screen whose submit another element covered was sent (a recipe's `submitVia`). Never
-   * the minter's: the host's click again of a `blocked` screen presses a covered submit from the
-   * keyboard by itself.
+   * recorded screen whose submit another element covered was sent (a recipe's `submitVia`).
+   * `click_layer`: the host first clicks the submit's centre with the mouse when the site's own
+   * control with the submit's name sits over it, as a recorded screen was sent, and clicks the
+   * submit otherwise. Never the minter's: the host's click again of a `blocked` screen presses a
+   * covered submit from the keyboard by itself, and any fill clicks such a control by itself.
    */
-  readonly submitVia?: "keyboard" | undefined;
+  readonly submitVia?: "keyboard" | "click_layer" | undefined;
 }
 
 /** Whether the host submits the step itself: it clicks its submit or presses its submit key. */
@@ -517,10 +519,14 @@ export type AutofillStepReport =
        * for the page's main frame went out, as a form's submission sends. With `via: "keyboard"`,
        * another element caught the host's click again of a `blocked` screen, or the step said to
        * (`submitVia`), and the host pressed Enter on that same submit instead, once focus landed
-       * on it.
+       * on it. With `via: "click_layer"`, the element over the submit was the site's own control
+       * for it, with the submit's own accessible name, in the submit's closest form or dialog and
+       * holding no field, and the host clicked the submit's centre with the mouse, so that control
+       * took the click as a person's would.
        * `failed`: the click or press threw before any such request went out.
        * `blocked`: another element sat over the submit and caught the host's click (`blockedBy`),
-       * so nothing was sent; the fields still hold what was typed. A fill reports it so; a click
+       * and it was no control of the site's own for the submit, so nothing was sent; the fields
+       * still hold what was typed. A fill reports it so; a click
        * again does only when focus would not land on the submit for a press from the keyboard.
        * `refused`: after the fill the host refused a control where it then sat or submitted.
        * `stayed_disabled`: the submit stayed disabled after the fields were filled, through the
@@ -545,8 +551,11 @@ export type AutofillStepReport =
        * after the page's own handlers ran on the click, so what the step filled may have gone out.
        */
       readonly clicked?: true;
-      /** A `clicked` submit the host pressed from the keyboard: Enter on the submit itself. */
-      readonly via?: "keyboard";
+      /**
+       * A `clicked` submit the host pressed from the keyboard (Enter on the submit itself), or
+       * clicked through the site's own control laid over it (`click_layer`).
+       */
+      readonly via?: "keyboard" | "click_layer";
       /**
        * Host-only, on a `refused` submit of a step with a submit or a submit key whose every field
        * takes a code: once the host typed every field, and before it clicked anything, the step's
