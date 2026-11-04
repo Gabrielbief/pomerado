@@ -936,6 +936,15 @@ const knownRefusal = (raw: unknown): unknown => {
 };
 
 /**
+ * Whether a refusal's own rationale rests on the step's allowed effects, as a misread of the read
+ * grant does. A hold the execution policy asks the owner for on another ground names that ground.
+ */
+const restsOnAllowedEffects = (raw: object): boolean => {
+  const rationale: unknown = Reflect.get(raw, "rationale");
+  return typeof rationale === "string" && /allowed[\s_]*effects/i.test(rationale);
+};
+
+/**
  * The ground an execution deny or escalate rests on (`refusalGround`) when the host's own record
  * settles it the other way: retry permission when trusted_execution_context.repeatableRead is
  * true, since the host itself refuses before review any run it does not permit, committing a
@@ -943,8 +952,8 @@ const knownRefusal = (raw: unknown): unknown => {
  * authority for a step whose own authority grants the write (`writeAuthority`), such as an act step
  * reviewed right after a read-only explore, missing confirmation for the very step the owner
  * confirmed (`confirmed`), or missing confirmation for a step the review labels a read whose own
- * allowed effects are the host's read grant (`explorationAllowedEffect`). Undefined for any other
- * decision.
+ * allowed effects are the host's read grant (`explorationAllowedEffect`), whose refusal rests on
+ * those effects. Undefined for any other decision.
  */
 const settledGroundOf = (
   pending: PendingExecution,
@@ -963,7 +972,8 @@ const settledGroundOf = (
     ground === "owner_confirmation" &&
     (confirmed !== undefined ||
       (Reflect.get(raw, "action") === "read" &&
-        pending.allowedEffects.includes(explorationAllowedEffect)))
+        pending.allowedEffects.includes(explorationAllowedEffect) &&
+        restsOnAllowedEffects(raw)))
   )
     return ground;
   return undefined;
