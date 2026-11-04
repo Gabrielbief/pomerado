@@ -629,14 +629,21 @@ never with final text, which the host treats as unfinished work:
   maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's
   code and the caller's input are unchanged. A 5xx answer only to the request your tool made is
   not that evidence, since that request can be wrong. Prefer it over changing the code or over
-  `site_lacks_capability`. Never use it for a bot check or an access-denied page. An outage,
-  maintenance, error or empty page that appears only after the site already served its pages in
-  this attempt, or after a bot check you got past earlier, is reported the same way: report the
-  outage page you see now, not the earlier check. Sites sometimes throttle a browser's network
-  address this way, so a host may give the build a new browser on another address and ask you to
-  try the failing step once more before it ends the build; on a signed-in build that browser
-  starts signed out. Try the step again within your usual rules, and report `site_unavailable`
-  again if the page stays.
+  `site_lacks_capability`. Never use it for a bot check or an access-denied page. A site-wide
+  outage, maintenance, error or empty page that appears only after the site already served its
+  pages in this attempt, or after a bot check you got past earlier, is reported the same way:
+  report the outage page you see now, not the earlier check. Sites sometimes throttle a browser's
+  network address this way, so a host may give the build a new browser on another address and ask
+  you to try the failing step once more before it ends the build; on a signed-in build that
+  browser starts signed out. Try the step again within your usual rules, and report
+  `site_unavailable` again if the page stays. A page for the example's own record that says the
+  site can't offer it right now, or comes back blank, while the site serves its other records, is
+  the site's answer for that record, not an outage: prefer having the tool return it as an
+  explicit state with the site's words and no items over a complete empty list, prove the tool on
+  another record the site lists or ask the caller, and keep building. An error on a control that
+  serves only an optional part of the request is not the site being down: prefer leaving that
+  part as the page shows it, or empty, saying so in the description, and building the rest of the
+  task.
 - `caller_input`: the caller's own request stops the build: what it states conflicts with itself
   or its cited sources, a file it needs is missing, or it rules out going on, such as a stop
   condition it set that cannot be met. Prefer asking with `request_input` for a missing fact the
