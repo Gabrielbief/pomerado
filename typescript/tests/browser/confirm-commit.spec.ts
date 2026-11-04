@@ -339,7 +339,7 @@ const cases: readonly Case[] = [
 ];
 
 // The commit call with a dialog outcome, as a write whose site may raise a native alert after its
-// save: the dialog wins and the response that already matched stays on the result.
+// save: the response, listed first, wins and the alert is held on the result beside it.
 const dialogCall = `${waitCode}
   const form = page.getByRole("form", { name: "Edit record" });
   ${confirmCommitCode}
@@ -516,12 +516,12 @@ test.describe("confirmCommit", () => {
       if (each.expected["status_label"] === undefined) expect(confirmed).not.toHaveProperty("status_label");
     });
 
-  // A native alert after the save: the dialog wins the wait, and confirmCommit reads it beside the
-  // response that already matched.
+  // A native alert after the save: the response listed first wins the wait, and confirmCommit reads
+  // the alert held beside it.
   for (const each of dialogCases)
     test(each.name, async ({ page: browserPage }) => {
       const { outcome, kept, confirmed } = await confirm(browserPage, each, dialogCall);
-      expect({ outcome, kept }).toEqual({ outcome: "alerted", kept: each.reply.status });
+      expect({ outcome, kept }).toEqual({ outcome: "saved", kept: each.reply.status });
       expect(confirmed).toMatchObject(each.expected);
       expect(confirmed["reason"]).toEqual(expect.any(String));
     });
