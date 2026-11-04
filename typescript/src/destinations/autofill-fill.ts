@@ -411,6 +411,20 @@ interface CallInput {
 interface FillInput extends CallInput {
   readonly values: readonly string[];
   /**
+   * Runs once, after every field of a step that names a submit control (`submit`) went in and
+   * before the host's first submit call, with the document the host typed the last field in
+   * (`typedIn`: when it began loading, undefined when no call read it), so a host may hold the
+   * submit while a page that judges how it was used finishes judging. Never for a step with only a
+   * submit key or no submit, a fill that stopped before its submit, a click again
+   * (`resubmitAutofillStep`), or a second click in the same fill (a retype by keys after
+   * `stayed_disabled`, a dismiss then a second click). It gets no value. When it fails, the host
+   * clicks nothing (`heldSubmit`): one look reports `page` when the page sent what was typed
+   * itself; otherwise the fill reports the submit `refused` with the failure's detail.
+   */
+  readonly beforeSubmit?: (typed: {
+    readonly document: number | undefined;
+  }) => Effect.Effect<void, Error>;
+  /**
    * Every value the host typed earlier in this sign-in on this browser, in any step: a clicked
    * submit reports where the page went (`navigated`) only when it is set and nothing the page
    * chose holds one of these or `values` (`reportedNavigation`). A first screen's is empty.
@@ -1074,6 +1088,10 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
       const ended = yield* fillField(input, progress, index, boxes);
       if (ended !== undefined) return ended;
     }
+    if (input.beforeSubmit !== undefined && step.submit !== undefined) {
+      const held = yield* Effect.either(input.beforeSubmit({ document: progress.typedIn }));
+      if (Either.isLeft(held)) return yield* heldSubmit(input, progress, boxes, held.left);
+    }
     const typed =
       input.typedBefore === undefined ? undefined : [...input.typedBefore, ...input.values];
     const typeAgain = (fill: FillInput) =>
@@ -1153,6 +1171,40 @@ export const resubmitAutofillStep = (input: CallInput): Effect.Effect<AutofillSt
 const byKeys = (keyboard: CredentialKeyboard): CredentialKeyboard => ({
   insertText: (target, text, options) => keyboard.insertText(target, text, { ...options, keys: true }),
 });
+
+/**
+ * A fill whose host's `beforeSubmit` failed (`error`): the host clicks nothing. It looks once,
+ * clicking nothing either, and a look that was lost or found the fields gone from the document
+ * the host typed in looks again for up to the step's send wait (`awaitNewDocument`). A look that
+ * finds the page sent what was typed itself, as a form that submits itself on its last input
+ * does, reports `page`. Otherwise the fill reports the submit `refused`, with the failure's detail.
+ */
+const heldSubmit = (
+  input: FillInput,
+  progress: FillProgress,
+  boxes: readonly number[],
+  error: Error,
+) =>
+  Effect.gen(function* () {
+    const call = submitCall(input, progress, boxes);
+    const look: AutofillFillCall = call.kind === "submit" ? { ...call, look: true } : call;
+    const changes = { count: 0 };
+    const first = yield* fillCall(input, progress, changes)(look);
+    const answered =
+      Either.isLeft(first) || leftOnly(first)
+        ? yield* awaitNewDocument(input, progress, look, first, sendWindow(input), changes)
+        : first;
+    const answer = Either.isRight(answered) ? answered.right : undefined;
+    if (answer !== undefined && "pageSent" in answer)
+      return filledReport(input.step, progress, "page", answer.url);
+    return filledReport(input.step, progress, "refused", answer?.url ?? "", {
+      ...refused("page_unavailable", "submit"),
+      failureDetail: failureDetail("autofill_step_failed", {
+        operation: "autofill.before_submit",
+        error,
+      }),
+    });
+  });
 
 /** The first of the step's selectors that reaches into another frame, its `dismiss` included. */
 const crossingSelector = (step: AutofillStep<FillSlot>) =>
