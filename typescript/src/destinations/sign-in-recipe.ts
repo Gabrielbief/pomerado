@@ -8,6 +8,7 @@ import type {
 import {
   autofillRecipe,
   autofillRecipePath,
+  ClickLayerAutofillRecipe,
   DismissAutofillRecipe,
   KeyboardSubmitAutofillRecipe,
   KeySubmitAutofillRecipe,
@@ -52,7 +53,7 @@ export const SignInRecipeV3 = Schema.Struct({
   ),
 );
 /**
- * A recipe this host reads: version 1, 2, 4, 5, 6, 7, 8, 9 or 10 as every host writes it, or
+ * A recipe this host reads: version 1, 2, 4, 5, 6, 7, 8, 9, 10 or 11 as every host writes it, or
  * this host's version 3.
  */
 export const SignInRecipe = Schema.Union(
@@ -66,6 +67,7 @@ export const SignInRecipe = Schema.Union(
   KeyboardSubmitAutofillRecipe,
   PrivateIdentifierAutofillRecipe,
   NationalPhoneAutofillRecipe,
+  ClickLayerAutofillRecipe,
 );
 export type SignInRecipe = typeof SignInRecipe.Type;
 export type SignInRecipeStep = AutofillRecipeStep;
@@ -76,11 +78,11 @@ export const resolvedPage = (step: SignInRecipeStep, workspace: string | undefin
     ? undefined
     : recordedScreenPage(step, workspace);
 
-const knownVersions: readonly unknown[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const knownVersions: readonly unknown[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 
 /**
  * A published recipe file read back: the recipe, `unknown_version` for a version this host does
- * not know, else `invalid`. Version 1, 2, 4, 5, 6, 7, 8, 9 and 10 decode as every host reads
+ * not know, else `invalid`. Version 1, 2, 4, 5, 6, 7, 8, 9, 10 and 11 decode as every host reads
  * them; version 3 is read only here.
  */
 export const decodeSignInRecipe = (text: string): SignInRecipe | "invalid" | "unknown_version" => {
@@ -116,8 +118,11 @@ export interface RecordedSignInStep {
   /** The key pressed in the last field to submit its form, on a form with no submit control. */
   readonly submitKey?: SubmitKey | undefined;
   readonly submittedBy?: "host" | "minter" | undefined;
-  /** `keyboard` when the host pressed the step's covered submit from the keyboard. */
-  readonly submitVia?: "keyboard" | undefined;
+  /**
+   * `keyboard` when the host pressed the step's covered submit from the keyboard, `click_layer`
+   * when it clicked through the site's own control over it.
+   */
+  readonly submitVia?: "keyboard" | "click_layer" | undefined;
   /** A two-factor method choice's recorded methods. */
   readonly methods?: AutofillStep["methods"];
   /** The secrets an earlier screen took that this one asks for again with a second factor. */
@@ -186,7 +191,7 @@ const inStepOrder = (step: SignInRecipeStep): SignInRecipeStep => ({
 });
 
 /**
- * A recipe as `auth-fill.json` holds it: `version`, then version 4's to 10's `workspace`, then each
+ * A recipe as `auth-fill.json` holds it: `version`, then version 4's to 11's `workspace`, then each
  * screen in `recipeStep`'s key order (a workspace screen's `origin` first), indented two spaces,
  * with no final newline. The same recipe is the same bytes from any
  * host that writes it this way.
@@ -201,7 +206,8 @@ export const signInRecipeText = (recipe: SignInRecipe) =>
         recipe.version !== 7 &&
         recipe.version !== 8 &&
         recipe.version !== 9 &&
-        recipe.version !== 10) ||
+        recipe.version !== 10 &&
+        recipe.version !== 11) ||
       recipe.workspace === undefined
         ? {}
         : { workspace: { parent: recipe.workspace.parent } }),
