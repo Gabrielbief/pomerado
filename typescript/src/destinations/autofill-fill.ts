@@ -60,11 +60,15 @@ const FillAnswer = Schema.Union(
   }),
   Schema.Struct({
     focused: Schema.Boolean,
-    /** Why the field did not take the focus: the error focusing threw, or the tag that holds it. */
+    /**
+     * Why the field did not take the focus: the error focusing threw, the tag that holds it, or
+     * that the field takes no typing yet, which the call never focused.
+     */
     unfocused: Schema.optional(
       Schema.Union(
         Schema.Struct({ focusError: Schema.String }),
         Schema.Struct({ activeTag: Schema.String }),
+        Schema.Struct({ editable: Schema.Literal(false) }),
       ),
     ),
     located: Schema.optional(FoundIn),
@@ -746,10 +750,28 @@ const submitWhenEnabled = (
   });
 
 /**
+ * How long the host waits for the page to switch on a field that takes no typing yet, as a page
+ * that switches each box of a split code on only once the one before it holds a digit does, and
+ * how often it calls again meanwhile.
+ */
+const codeBoxEnableMs = 2_000;
+const codeBoxPollMs = 100;
+
+/** A focus call that found its field takes no typing yet, and so focused nothing. */
+const switchedOff = (answered: Either.Either<CallAnswer, Error>) =>
+  Either.isRight(answered) &&
+  "unfocused" in answered.right &&
+  answered.right.unfocused !== undefined &&
+  "editable" in answered.right.unfocused;
+
+/**
  * One field: a date's call fills it; any other field's call focuses it and binds its original node/document/frame; the host inserts its
  * value atomically. Undefined when the fill goes on to the next field, else the step's report.
  * The focus call of the first of the step's code boxes (`boxes`) first empties every box that
- * still holds something (`emptyBoxes`).
+ * still holds something (`emptyBoxes`). A field that takes no typing yet, as only a later box of a
+ * split code may at this point (`untrustedTarget`), gets the focus call again every
+ * `codeBoxPollMs` for up to `codeBoxEnableMs`, and is refused as `not_editable` when it stays so.
+ * The changes those calls find count across the wait.
  */
 const fillField = (
   input: FillInput,
@@ -767,10 +789,7 @@ const fillField = (
         : isDateOfBirthFormat(field.format)
           ? field.format
           : "YYYY-MM-DD";
-    const answered = yield* fillCall(
-      input,
-      progress,
-    )(
+    const call: AutofillFillCall =
       format === undefined
         ? {
             kind: "focus",
@@ -778,8 +797,14 @@ const fillField = (
             bindingKey,
             ...(index === boxes[0] ? { emptyBoxes: boxes } : {}),
           }
-        : { kind: "date", index, iso: value, format },
-    );
+        : { kind: "date", index, iso: value, format };
+    const changes = { count: 0 };
+    const started = Date.now();
+    let answered = yield* fillCall(input, progress, changes)(call);
+    while (switchedOff(answered) && Date.now() - started < codeBoxEnableMs) {
+      yield* Effect.sleep(codeBoxPollMs);
+      answered = yield* fillCall(input, progress, changes)(call);
+    }
     if (answered._tag === "Left")
       return failedCall(progress, answered.left, {
         ...(format === undefined ? {} : { held: input.values }),
@@ -795,7 +820,8 @@ const fillField = (
 /**
  * A field that did not take the focus, or whose native insertion refused (`insertion`, its finite
  * cause), and why. A private answer's question that changed is a change on the screen, as when the
- * call found it changed before focusing.
+ * call found it changed before focusing. A field that still takes no typing once the host's wait
+ * ran out is `not_editable`, as inspection refuses one.
  */
 const untypedRefusal = (
   input: FillInput,
@@ -803,8 +829,14 @@ const untypedRefusal = (
   index: number,
   answer: Extract<CallAnswer, { readonly focused: boolean }>,
   insertion: InsertionRefusal | undefined,
-) =>
-  withCheck(
+) => {
+  if (answer.unfocused !== undefined && "editable" in answer.unfocused)
+    return withCheck(refused("not_editable", index), "not_editable", {
+      control: progress.judged.fields[index]?.control,
+      ...targetEvidence(progress.judged.fields[index], evidenceOrigins(input, progress)),
+      ...foundEvidence(answer.url, answer.located, evidenceOrigins(input, progress)),
+    });
+  return withCheck(
     refused("credential_target_refused", index),
     insertion === undefined
       ? "not_focused"
@@ -819,6 +851,7 @@ const untypedRefusal = (
       ...foundEvidence(answer.url, answer.located, evidenceOrigins(input, progress)),
     },
   );
+};
 
 /** What a field's own call found: a date filled, or a focused field the host now types. */
 const afterFieldCall = (

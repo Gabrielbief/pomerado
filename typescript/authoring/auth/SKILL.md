@@ -185,12 +185,13 @@ attribute.
   - `slot: "password"` for the password.
   - `slot: "code"` for a one-time or authenticator code. A saved authenticator seed answers it;
     otherwise the host asks the caller for the code. Never ask for a code yourself. A code split
-    into one-character boxes is one `code` field per box, every box from the first to the last, in
-    order, as a split date is one field per part (below), even when the page moves the focus to
-    the next box or takes a pasted code in the first. Count the boxes on the screen before you
-    send the step. A step field never carries `codeBox` or any box number: the host reads each
-    box's place from the page, so send only `selector` and `slot` for each box. The host asks
-    once, types one character into each and submits only once each box holds one. A step that
+    into one-character boxes is one code, one `code` field per box, every box from the first to
+    the last, in order, as a split date is one field per part (below), even when the page moves the
+    focus to the next box, switches each box on only after the one before it holds a digit, or
+    takes a pasted code in the first. Count the boxes on the screen before you send the step. A
+    step field never carries `codeBox` or any box number: the host reads each box's place from the
+    page, so send only `selector` and `slot` for each box. The host asks once, types one character
+    into each, waiting for each box as it types, and submits only once each box holds one. A step that
     names only some of the boxes, or names them out of order, comes back refused as
     `code_boxes_incomplete`, typing nothing: its `codeBoxes` says how many boxes the screen shows
     and which ones the step named; send the step again with all of them. When a code screen asks
