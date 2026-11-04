@@ -689,7 +689,10 @@ const isScriptAddress = (url: string) => URL.parse(url)?.protocol === "javascrip
  * browser the host has typed nothing into yet (`judgedBeforeTyping` unset) judges its submit by its
  * frame, document and destinations other than scripts, whatever a script runs: no script can send
  * a typed value, and the next screen is inspected before anything is typed there.
- * A card-fill step's never is, nor any other script action or link.
+ * A card-fill step's never is, nor any other script action or link. A step whose every field takes
+ * a code, one code split across boxes, needs only the field at `from` to take typing: a page may
+ * switch each box on only once the one before it holds a digit, and the fill waits for each later
+ * box before it types there.
  */
 export const untrustedTarget = (
   targets: typeof Targets.Type,
@@ -706,6 +709,7 @@ export const untrustedTarget = (
 ) => {
   const predicate = signInUrlTrust(trust, step);
   const signIn = !step.fields.some((field) => isCardSlot(field.slot));
+  const splitCode = step.fields.every((field) => field.slot === "code");
   // Nothing typed on this browser yet either, so no script can carry a typed value anywhere.
   const typesNothing =
     signIn && step.fields.length === 0 && trust.judgedBeforeTyping === undefined;
@@ -771,7 +775,8 @@ export const untrustedTarget = (
     const choosable =
       step.fields[index]?.slot === "date_of_birth" &&
       (target.control === "select" || target.control === "combobox");
-    if (index >= from && !target.editable && !choosable)
+    const toType = splitCode ? index === from : index >= from;
+    if (toType && !target.editable && !choosable)
       return withCheck(refused("not_editable", index), "not_editable", {
         control: target.control,
         ...targetEvidence(target, named),
