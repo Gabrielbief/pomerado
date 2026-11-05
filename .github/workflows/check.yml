@@ -209,6 +209,7 @@ jobs:
           path: ${{ runner.temp }}/browser-durations
           run-id: ${{ steps.durations.outputs.run-id }}
           github-token: ${{ github.token }}
+      - run: mkdir -p "$RUNNER_TEMP/browser-durations" && cp seed-durations.json "$RUNNER_TEMP/browser-durations/"
       - run: corepack pnpm exec playwright test --list --reporter=json > "$RUNNER_TEMP/browser-tests.json"
       - name: Plan the shards
         id: plan
