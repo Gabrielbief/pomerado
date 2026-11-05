@@ -46,8 +46,8 @@ const SecretRecipeField = Schema.Struct({
 /**
  * An identifier field by every kind it accepts, which each run resolves against its own login. A
  * `private_identifier`, accepted alone with the site's own `label` for its field, rides only in a
- * version 9 to 12 recipe (`PrivateIdentifierAutofillRecipe`, `NationalPhoneAutofillRecipe`,
- * `ClickLayerAutofillRecipe`, `MethodOptionAutofillRecipe`).
+ * version 9 to 13 recipe (`PrivateIdentifierAutofillRecipe`, `NationalPhoneAutofillRecipe`,
+ * `ClickLayerAutofillRecipe`, `MethodOptionAutofillRecipe`, `SignInChoiceAutofillRecipe`).
  */
 const IdentifierRecipeField = Schema.Struct({
   selector: Selector,
@@ -836,8 +836,8 @@ const namesNational = (step: RecordedRecipeStep) =>
  * empty list is none and is left out), else version 6 only when a step names `dismiss`, else
  * version 5 only when a step submits with a key or refills a secret (`refills`), else version 4
  * only when its sign-in may move to a workspace host (`origins.workspace`, or a workspace step),
- * else version 2 only with a popup or an approval, else version 1. A security answer's question selector rides in any of them. Versions
- * 4 to 13 write `workspace` before `steps`.
+ * else version 2 only with a popup or an approval, else version 1. A security answer's question
+ * selector rides in any of them. Versions 4 to 13 write `workspace` before `steps`.
  */
 export const autofillRecipe = <SignedIn>(
   steps: readonly RecordedRecipeStep[],
