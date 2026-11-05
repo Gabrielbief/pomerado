@@ -956,6 +956,15 @@ describe("the publication policy", () => {
     expect(policy).not.toContain("  ");
   });
 
+  // A site's choice longer than an option label holds reaches the caller shortened, and the review
+  // refused the tool for not showing the site's full text, a fix it said only the host could make,
+  // though the question's prompt can hold that text.
+  it("counts a shortened label with the full text in the prompt only for a choice too long for one", () => {
+    const rule =
+      "An option label holds at most 256 characters. Only when a site's choice is longer than that, a label shortened to fit, with the choice's full text in the question's prompt, counts as showing the site's full text. For a `site_field`, the host adds that full text to the prompt itself. A choice that fits keeps its full text in its label.";
+    expect(guardianPublicationPolicy).toContain(`which no input could name beforehand. ${rule}\n`);
+  });
+
   // A caller's place, venue or company name matches in its usual forms, so neither the review of
   // a live step nor the publication review asks a tool to require an exact match.
   it("gives the execution and publication reviews the same fuzzy proper-noun rule", () => {

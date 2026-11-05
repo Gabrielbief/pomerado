@@ -5,6 +5,7 @@ import type { Deadline } from "./deadline.js";
 import {
   ConfirmQuestion,
   InputRequest,
+  longestPrompt,
   QuestionId,
   questionIdPattern,
   SecretQuestion,
@@ -91,7 +92,10 @@ export type ScriptQuestionDeclarations = Readonly<Record<string, ScriptQuestionD
 export const ScriptOption = Schema.Struct({
   /** What `ask` returns when the caller picks it. It never leaves the sandbox. */
   value: Schema.String.pipe(Schema.minLength(1)),
-  /** The option as the site shows it. A long one reaches the caller shortened (`shownLabel`). */
+  /**
+   * The option as the site shows it. A long one reaches the caller shortened (`cutTo`), and a
+   * site field's prompt adds its full text (`siteFieldPrompt`).
+   */
   label: Schema.String.pipe(Schema.minLength(1)),
   /**
    * A detail of the caller's own account, such as a saved card, a passenger or an address. Its
@@ -210,22 +214,37 @@ type GivenSpec = AskSpec | ReadonlyArray<ScriptOption>;
 /** The pre-unification call passed a choice's options directly. */
 const isOptionList = (spec: GivenSpec): spec is ReadonlyArray<ScriptOption> => Array.isArray(spec);
 
-/**
- * The longest label the host takes (`InputOption`), and the longest site-field prompt, in UTF-16
- * code units as it counts them.
- */
+/** The longest label the host takes (`InputOption`), in UTF-16 code units as it counts them. */
 export const longestLabel = 256;
 /**
- * A label the host can show: one past `longestLabel` keeps its start and ends in "…". The cut
+ * Text the host can show within `limit`: longer text keeps its start and ends in "…". The cut
  * never splits a surrogate pair, so the start may be one code unit shorter. Options that read
  * the same once cut stay apart, since the host names each by its own id.
  */
-const shownLabel = (label: string) => {
-  if (label.length <= longestLabel) return label;
-  const end = longestLabel - 1;
-  const last = label.charCodeAt(end - 1);
-  return `${label.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end)}…`;
+const cutTo = (text: string, limit: number) => {
+  if (text.length <= limit) return text;
+  const end = limit - 1;
+  const last = text.charCodeAt(end - 1);
+  return `${text.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end)}…`;
 };
+
+/**
+ * A site field's prompt: the page's label whole, and after it the full text of each option its
+ * label had to cut, by the option's number from 1, all cut only past `longestPrompt`. An
+ * account-specific option's text never joins it: that label shows only on the protected page.
+ */
+const siteFieldPrompt = (label: string, options: ReadonlyArray<ScriptOption> = []) =>
+  cutTo(
+    [
+      label,
+      ...options.flatMap((option, index) =>
+        option.label.length > longestLabel && option.accountSpecific !== true
+          ? [`Option ${index + 1} in full: ${option.label.trim()}`]
+          : [],
+      ),
+    ].join("\n\n"),
+    longestPrompt,
+  );
 
 /** The page's options with host-opaque ids, and the value behind each id. */
 const offeredOptions = (id: string, given: ReadonlyArray<ScriptOption> | undefined) => {
@@ -246,7 +265,7 @@ const offeredOptions = (id: string, given: ReadonlyArray<ScriptOption> | undefin
     values: new Map(options.map((option, index) => [`o${index + 1}`, option.value])),
     offered: options.map((option, index) => ({
       id: `o${index + 1}`,
-      label: shownLabel(option.label),
+      label: cutTo(option.label, longestLabel),
       ...(option.accountSpecific === undefined ? {} : { accountSpecific: option.accountSpecific }),
       ...(option.maskedLabel === undefined ? {} : { maskedLabel: option.maskedLabel }),
     })),
@@ -327,15 +346,20 @@ const askedQuestion = (
         values,
       }));
     case "site_field": {
-      const prompt = shownLabel(typeof label === "string" ? label.trim() : "");
-      if (prompt === "") return Either.left(invalidOptions());
+      const pageLabel = typeof label === "string" ? label.trim() : "";
+      if (pageLabel === "") return Either.left(invalidOptions());
       if (given === undefined)
         return Either.right({
-          question: { id, type: "text" as const, prompt },
+          question: { id, type: "text" as const, prompt: siteFieldPrompt(pageLabel) },
           values: new Map<string, string>(),
         });
       return Either.map(offeredOptions(id, given), ({ values, offered }) => ({
-        question: { id, type: "choice" as const, prompt, options: offered },
+        question: {
+          id,
+          type: "choice" as const,
+          prompt: siteFieldPrompt(pageLabel, given),
+          options: offered,
+        },
         values,
       }));
     }
