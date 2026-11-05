@@ -43,6 +43,8 @@ interface SiteScript {
   readonly fill: (screen: string, values: readonly string[], count: number) => FillReply;
   /** How a fill of a screen with no submit reports its send: the page moved on, or none seen. */
   readonly sent?: "page" | "none";
+  /** The `id` and `name` of the element each selector finds; none by default. */
+  readonly named?: Readonly<Record<string, { readonly id: string; readonly name: string }>>;
 }
 
 /** A scripted site on fixture hooks, with the fills it took. */
@@ -93,8 +95,8 @@ const scriptedSite = (script: SiteScript) => {
               role: null,
               formMethod: "post",
               type: "text",
-              name: null,
-              id: null,
+              name: script.named?.[field.selector]?.name ?? null,
+              id: script.named?.[field.selector]?.id ?? null,
               autocomplete: null,
               inputmode: null,
               label: field.slot === "code" ? state.instruction : "Phone",
@@ -368,4 +370,80 @@ it("never types a second code equal to the first", async () => {
     Either.left(new TestFailure({ code: "unanswered:code_already_rejected" })),
   );
   expect(site.codes()).toEqual(["111111"]);
+});
+
+// One box the page finds under two selectors, whose first code it refuses with no error shown:
+// the second recorded code screen is that same box, by its id and name, so no refill goes into it.
+it("sends no code refill into the box the first code went into, found under another selector", async () => {
+  const box = { id: "otp", name: "otp" };
+  const site = scriptedSite({
+    screens: { ...screens, text: ["#otp", "input[name=otp]", "#otp-error"] },
+    named: { "#otp": box, "input[name=otp]": box },
+    fill: (screen, _values, count) =>
+      screen === "sign-in"
+        ? { next: "text" }
+        : count === 0
+          ? {}
+          : { markers: ["#otp-error"] },
+  });
+  const first = {
+    page: `${origin}/sign-in/verify`,
+    fields: [{ selector: "#otp", slot: "code" as const }],
+  };
+  const alias = {
+    page: `${origin}/sign-in/verify`,
+    fields: [{ selector: "input[name=otp]", slot: "code" as const }],
+    refills: ["code" as const],
+    rejectedMarkers: [{ slot: "code" as const, selector: "#otp-error" }],
+  };
+  const { outcome } = await replay(twoCodes(phoneStep, first, alias), site.hooks, [
+    "111111",
+    "222222",
+    "333333",
+    "444444",
+  ]);
+  expect(outcome).toEqual(
+    Either.right(expect.objectContaining({ reason: "credential_already_filled" })),
+  );
+  expect(site.codes()).toEqual(["111111"]);
+});
+
+// A second code screen of one-character boxes that takes some of the first screen's boxes again,
+// under other selectors, is not another code screen: every box has to be another.
+it("sends no code refill into a row of boxes that takes some of the first row's boxes again", async () => {
+  const firstRow = [0, 1, 2, 3, 4, 5].map((index) => `#t${String(index)}`);
+  const reused = [0, 1, 2].map((index) => `input[name=t${String(index)}]`);
+  const secondRow = [...reused, ...[3, 4, 5].map((index) => `#e${String(index)}`)];
+  const boxName = (selector: string) => selector.replace(/^#|^input\[name=|\]$/gu, "");
+  const named = Object.fromEntries(
+    [...firstRow, ...secondRow].map((selector) => [
+      selector,
+      { id: boxName(selector), name: boxName(selector) },
+    ]),
+  );
+  const site = scriptedSite({
+    screens: { ...screens, text: firstRow, email: secondRow },
+    named,
+    fill: (screen) =>
+      screen === "sign-in"
+        ? { next: "text" }
+        : screen === "text"
+          ? { next: "email" }
+          : { next: "home", signIn: true },
+  });
+  const boxes = (selectors: readonly string[]) =>
+    selectors.map((selector) => ({ selector, slot: "code" as const }));
+  const { outcome } = await replay(
+    twoCodes(
+      phoneStep,
+      { page: `${origin}/sign-in/verify`, fields: boxes(firstRow) },
+      { page: `${origin}/sign-in/verify`, fields: boxes(secondRow), refills: ["code"] },
+    ),
+    site.hooks,
+    ["111111", "222222"],
+  );
+  expect(outcome).toEqual(
+    Either.right(expect.objectContaining({ reason: "credential_already_filled" })),
+  );
+  expect(site.fills.map(({ screen }) => screen)).toEqual(["sign-in", "text"]);
 });

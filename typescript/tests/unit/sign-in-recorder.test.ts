@@ -70,6 +70,8 @@ interface Options {
   readonly lateMarker?: number;
   /** The one-character code boxes the screen shows, by the code fields' order. */
   readonly codeBoxes?: number;
+  /** The `id` and `name` of the element each selector finds; none by default. */
+  readonly named?: Readonly<Record<string, { readonly id: string; readonly name: string }>>;
 }
 
 /** A recorder over a synthetic site, with what it asked, filled, reviewed and checked. */
@@ -103,6 +105,7 @@ const harness = (options: Options = {}) => {
           origin,
           fields: step.fields.map((field) => ({
             ...described,
+            ...options.named?.[field.selector],
             slot: field.slot,
             ...(field.slot === "private_answer" && questions.length > 0
               ? { questionText: questions.shift() ?? "" }
@@ -729,7 +732,7 @@ it("records no refill on a screen that asks for the password again after a code 
   expect(published?.recipe.steps.some((step) => "refills" in step)).toBe(false);
 });
 
-it("records a second code screen whose code box is another as a code refill, and the same code screen sent again as none", async () => {
+it("records a second code screen whose code box is another as a code refill, and the same code box sent again as none", async () => {
   const codeScreen = (selector: string): SignInStep => ({
     fields: [{ selector, slot: "code" }],
   });
@@ -740,11 +743,12 @@ it("records a second code screen whose code box is another as a code refill, and
     submit: step.submit === undefined ? "page" : "clicked",
     url: `${origin}/next`,
   });
-  const record = async (second: string) => {
+  const record = async (second: string, named?: Options["named"]) => {
     const host = harness({
       held: account,
       answers: { code: ["111111", "222222"] },
       report: selfSending,
+      ...(named === undefined ? {} : { named }),
     });
     return host.run((recorder) =>
       Effect.gen(function* () {
@@ -769,6 +773,14 @@ it("records a second code screen whose code box is another as a code refill, and
 
   const again = await record("#text-code");
   expect(again?.recipe.steps.some((step) => "refills" in step)).toBe(false);
+
+  // The same box found under another selector is the same box, by its id and name.
+  const box = { id: "text-code", name: "code" };
+  const aliased = await record("input[name=code]", {
+    "#text-code": box,
+    "input[name=code]": box,
+  });
+  expect(aliased?.recipe.steps.some((step) => "refills" in step)).toBe(false);
 });
 
 it("fills a password twice at most in one sign-in, and a ZIP once", async () => {

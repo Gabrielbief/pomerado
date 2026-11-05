@@ -597,7 +597,7 @@ export const makeSignInRecorder = (input: {
         open === undefined ? openSignIn(at) : { state: open, refund: () => undefined };
       const reasked = reasksPassword(open, step, refills)
         ? ("password" as const)
-        : reasksCode(open, step, refills)
+        : reasksCode(open, step, refills, inspected.screen.fields)
           ? ("code" as const)
           : undefined;
       yield* armStep(state, step, inspected, filled, secretIn);

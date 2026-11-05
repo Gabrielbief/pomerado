@@ -23,6 +23,7 @@ import {
   type SecurityAnswerFills,
   isExtraSecret,
   isSecret,
+  type NamedFields,
   provesLogin,
   takesAnotherCode,
 } from "./autofill-state.js";
@@ -421,9 +422,10 @@ export const shownAgain = <E>(
  * Whether a recorded screen's planned refill of `slot` holds now: the screen lists it (`planned`,
  * its recipe step's `refills`) and it went out once at most so far. A password's also needs the
  * screen to ask for a second factor this replay has not sent, as a site that wants the password
- * entered again with a one-time code does; a code's needs the screen's code field to be another
- * than the code screen that ran before (`earlierCode`, `takesAnotherCode`). A screen asking for
- * either again any other way is a rejection.
+ * entered again with a one-time code does; a code's needs the screen's code boxes, as the host
+ * found them (`codeScreens.shown`), to be none of the code screen's that ran before
+ * (`codeScreens.earlier`, `takesAnotherCode`). A screen asking for either again any other way
+ * is a rejection.
  */
 const plannedRefill = (
   step: AutofillStep,
@@ -431,21 +433,30 @@ const plannedRefill = (
   planned: readonly AutofillSecret[],
   maySent: ReadonlySet<AutofillSecret>,
   refilled: ReadonlySet<AutofillSecret>,
-  earlierCode: Pick<AutofillStep, "fields"> | undefined,
+  codeScreens: CodeScreens | undefined,
 ) =>
   planned.some((each) => each === slot) &&
   !refilled.has(slot) &&
   (slot === "code"
-    ? takesAnotherCode(step, earlierCode)
+    ? codeScreens !== undefined && takesAnotherCode(codeScreens.shown, codeScreens.earlier)
     : step.fields.some(
         (field) => isSecondFactor(field.slot) && isSecret(field.slot) && !maySent.has(field.slot),
       ));
 
 /**
+ * The screen a planned code refill would fill, as the host found it (`shown`, `namedFields`), and
+ * the code screen that ran before it, as the sign-in recorded it (`earlier`).
+ */
+export interface CodeScreens {
+  readonly shown: NamedFields;
+  readonly earlier: NamedFields | undefined;
+}
+
+/**
  * Whether a step would fill a secret that may have gone out already beyond what a retry of a
  * refused code, or the recorded screen's planned refill, allows: a password or code once more
  * each, so either goes out at most twice; a date of birth, ZIP or recovery code never again.
- * `earlierCode` is the code screen that ran before, which a planned code refill needs.
+ * A planned code refill needs `codeScreens`, and is refused without them.
  */
 export const refillRefused = (
   step: AutofillStep,
@@ -454,7 +465,7 @@ export const refillRefused = (
   codeAgain: "rejected" | undefined,
   corrected: ReadonlySet<AutofillSlot>,
   planned: readonly AutofillSecret[] = [],
-  earlierCode?: Pick<AutofillStep, "fields">,
+  codeScreens?: CodeScreens,
 ) =>
   step.fields.some(
     (field) =>
@@ -465,7 +476,7 @@ export const refillRefused = (
         codeAgain === "rejected" &&
         (field.slot === "code" || (provesLogin(field.slot) && !refilled.has(field.slot)))
       ) &&
-      !plannedRefill(step, field.slot, planned, maySent, refilled, earlierCode),
+      !plannedRefill(step, field.slot, planned, maySent, refilled, codeScreens),
   );
 
 /** Records each secret a step may have sent, and those it sent a second time. */

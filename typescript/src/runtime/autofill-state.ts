@@ -515,42 +515,74 @@ export const reasksPassword = (
   );
 };
 
-/** The selectors of a screen's code fields. */
-const codeSelectors = (step: Pick<AutofillStep, "fields">) =>
-  step.fields.filter((field) => field.slot === "code").map((field) => field.selector);
+/** What named a control when the host found it: its `id` and `name` attributes. */
+type ControlNames = Pick<ControlIdentity, "id" | "name">;
+/** A screen's fields, each with what named its control when the host found it, if known. */
+export interface NamedFields {
+  readonly fields: readonly {
+    readonly slot: string;
+    readonly selector: string;
+    readonly identity?: ControlNames | undefined;
+  }[];
+}
+
+/** A step's fields with what named each control on the screen the host inspected, in order. */
+export const namedFields = (
+  step: Pick<AutofillStep, "fields">,
+  screen: readonly ControlNames[],
+): NamedFields => ({
+  fields: step.fields.map((field, index) => ({ ...field, identity: screen[index] })),
+});
+
+/** An `id` or `name` a control showed, never an empty one. */
+const shown = (value: string | null | undefined) =>
+  value !== undefined && value !== null && value !== "";
 
 /**
- * Whether `step` takes a code in a field the earlier code screen (`earlier`) did not: each of its
- * code fields names another selector, so the same code screen shown again never reads as a second
- * one. Two codes typed into the same box are not told apart.
+ * Whether two code boxes are the same field: the same `id` or `name`, or, when neither box shows
+ * either, the same selector. A box named under another selector is still the same box.
  */
-export const takesAnotherCode = (
-  step: Pick<AutofillStep, "fields">,
-  earlier: Pick<AutofillStep, "fields"> | undefined,
-) => {
-  const before = earlier === undefined ? [] : codeSelectors(earlier);
-  const here = codeSelectors(step);
+const sameBox = (here: NamedFields["fields"][number], before: NamedFields["fields"][number]) => {
+  const a = here.identity;
+  const b = before.identity;
+  if (![a?.id, a?.name, b?.id, b?.name].some(shown)) return here.selector === before.selector;
+  return (shown(a?.id) && a?.id === b?.id) || (shown(a?.name) && a?.name === b?.name);
+};
+
+/**
+ * Whether `step` takes a code in boxes the earlier code screen (`earlier`) did not: none of its
+ * code boxes is one of the earlier screen's (`sameBox`), so the same code screen shown again never
+ * reads as a second one. Two codes typed into the same box are not told apart.
+ */
+export const takesAnotherCode = (step: NamedFields, earlier: NamedFields | undefined) => {
+  const codes = (fields: NamedFields | undefined) =>
+    (fields?.fields ?? []).filter((field) => field.slot === "code");
+  const before = codes(earlier);
+  const here = codes(step);
   return (
-    before.length > 0 && here.length > 0 && here.every((selector) => !before.includes(selector))
+    before.length > 0 &&
+    here.length > 0 &&
+    here.every((box) => !before.some((previous) => sameBox(box, previous)))
   );
 };
 
 /**
  * Whether a screen of the open sign-in (`open`) asks for a second, different code after the code
  * an earlier screen took went out (`refills`, the secrets filled before, is the code alone): its
- * code field is not the last code screen's (`takesAnotherCode`), as a sign-in that sends one code
- * by text and then another by email does. The recipe records the refill there, and only there a
- * run's replay makes it, once.
+ * code boxes, as the host found them on the screen (`screen`), are not the last code screen's
+ * (`takesAnotherCode`), as a sign-in that sends one code by text and then another by email does.
+ * The recipe records the refill there, and only there a run's replay makes it, once.
  */
 export const reasksCode = (
   open: AutofillSignInState | undefined,
   step: AutofillStep,
   refills: readonly AutofillSlot[],
+  screen: readonly ControlNames[],
 ) =>
   refills.includes("code") &&
   refills.every((slot) => slot === "code") &&
   takesAnotherCode(
-    step,
+    namedFields(step, screen),
     open?.steps.findLast((taken) => taken.fields.some((field) => field.slot === "code")),
   );
 

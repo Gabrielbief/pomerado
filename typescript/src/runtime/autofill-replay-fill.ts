@@ -13,6 +13,7 @@ import {
   armStep,
   type AutofillSecret,
   isSecret,
+  namedFields,
   recordStep,
   registeredSecretIn,
   screenSubmit,
@@ -81,8 +82,9 @@ const retryRefusal = <E extends YieldableError, V extends string, L extends Auto
   explicitCodeRejection: boolean,
   corrected: ReadonlySet<AutofillSlot>,
   planned: readonly AutofillSecret[],
+  inspection: AutofillInspection,
 ) => {
-  const { retryState, sent, progress } = session;
+  const { retryState, sent, progress, state } = session;
   if (codeAgain === "rejected" && takesCode(asked) && retryState.codeAttempts.current >= 2)
     return "code_rejected" as const;
   if (
@@ -100,7 +102,10 @@ const retryRefusal = <E extends YieldableError, V extends string, L extends Auto
       codeAgain,
       corrected,
       planned,
-      progress.ran.findLast(takesCode),
+      {
+        shown: namedFields(asked, inspection.screen.fields),
+        earlier: state.steps.findLast(takesCode),
+      },
     )
   )
     return codeAgain === "rejected" && explicitCodeRejection
@@ -179,6 +184,7 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
       explicitCodeRejection,
       corrected,
       planned,
+      inspection,
     );
     if (refused !== undefined) return refused;
     // Admitted past a code that may have gone out with no refusal: the screen's planned code
