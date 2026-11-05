@@ -86,6 +86,9 @@ export const fileReadback = (
 export const fileReadbackRule =
   "a file's bytes stay with the host: files.place puts a caller's file into a file input and files.collect keeps a download, and code never sets a file input, handles a download or reads a placed or downloaded file back (an input's .files items, FileReader, FormData, DataTransfer, a request body)";
 
+/** How each refusal `fileReadbackRefusal` gives ends, after its file, line and what code does. */
+const refusalEnd = `: ${fileReadbackRule}. Nothing was executed.`;
+
 /** Why a live step is refused before review for reading a file back, if it is. */
 export const fileReadbackRefusal = (
   files: ReadonlyMap<string, string>,
@@ -96,5 +99,12 @@ export const fileReadbackRefusal = (
   const found = fileReadback(files, handlesFiles);
   return found === undefined
     ? undefined
-    : `${found.path} line ${found.line} ${found.does}: ${fileReadbackRule}. Nothing was executed.`;
+    : `${found.path} line ${found.line} ${found.does}${refusalEnd}`;
 };
+
+/**
+ * Whether a reason is a refusal `fileReadbackRefusal` gave, as a host returns it for the step it
+ * refused: an `unsupported` execution's observations.
+ */
+export const isFileReadbackRefusal = (reason: unknown): boolean =>
+  typeof reason === "string" && reason.endsWith(refusalEnd);
