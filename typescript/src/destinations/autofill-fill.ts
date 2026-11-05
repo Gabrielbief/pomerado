@@ -234,6 +234,12 @@ interface FillProgress {
   /** Whether any value may have reached the page. */
   typed: boolean;
   /**
+   * A trusted key may have reached the page though the field refused the value: the step's one
+   * code field's page moved the focus on once a key went in (`codeAtOnce`). Evidence then names
+   * only what it would once anything was typed (`evidenceOrigins`).
+   */
+  keyed?: true;
+  /**
    * The fields the next call checks still hold something: the one the host typed last, or every
    * field it typed before a submit it clicks again.
    */
@@ -382,11 +388,12 @@ const guardOrigins = (input: CallInput) =>
   namedAfterTyping(input.inspection) ?? judgedOrigins(input.inspection);
 
 /**
- * The origins a refusal's evidence may name: any until something was typed into the page, then
- * only the guard's (`guardOrigins`), since page code may have put a typed value in another.
+ * The origins a refusal's evidence may name: any until something was typed into the page, or a key
+ * may have gone in (`keyed`), then only the guard's (`guardOrigins`), since page code may have put
+ * a typed value in another.
  */
 const evidenceOrigins = (input: CallInput, progress: FillProgress) =>
-  progress.typed || input.inspection.judgedBeforeTyping !== undefined
+  progress.typed || progress.keyed === true || input.inspection.judgedBeforeTyping !== undefined
     ? guardOrigins(input)
     : undefined;
 
@@ -1042,6 +1049,7 @@ const afterFieldCall = (
       }
       insertion = typing.right;
       if (!atOnce && focusLeftCodeField(input, index, insertion)) {
+        progress.keyed = true;
         const inserted = yield* codeAtOnce(input, progress, index);
         if (inserted !== "untyped") return inserted;
       }
