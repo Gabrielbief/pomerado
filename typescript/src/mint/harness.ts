@@ -610,8 +610,9 @@ const taskUpdateRefusalCode = (
  * The host source rule that refused an execution before it ran, read from its `unsupported`
  * reason as core's own check gives it: a placed or downloaded file's bytes stay with the host
  * (`fileReadbackRefusal`), or a typed card does (`cardReadbackRefusal`). No source the build
- * writes gets those bytes past it. Any other unsupported answer, such as a refused preflight, a
- * handle the minter misplaced or a reason the host words itself, names none.
+ * writes gets those bytes past it. A file refusal that names the file API to use instead, and any
+ * other unsupported answer, such as a refused preflight, a handle the minter misplaced or a reason
+ * the host words itself, names none.
  */
 const hostSourceRule = (
   evidence: ExecutionEvidence,

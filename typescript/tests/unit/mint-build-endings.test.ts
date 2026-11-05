@@ -550,6 +550,15 @@ it.each([
     ),
     rule: undefined,
   },
+  {
+    basis: "a file refusal that names the file API to use",
+    refusal: fileReadbackRefusal(
+      new Map([["explore/save.mjs", "await download.saveAs(target);"]]),
+      liveStep,
+      false,
+    ),
+    rule: undefined,
+  },
   { basis: "Guardian", refusal: guardianExecutionDenial, rule: undefined },
 ] as const)(
   "ends as host_refused after $basis refused an execution: $rule",
@@ -1761,6 +1770,7 @@ const hostRefusedAfter = (
   steps: readonly (object | MintFailure)[],
   then: {
     readonly update?: boolean;
+    readonly readBack?: boolean;
     readonly publish?: boolean;
     readonly before?: { readonly update: true; readonly guardianDenied: true };
   } = {},
@@ -1780,6 +1790,9 @@ const hostRefusedAfter = (
             ]),
         ...steps.map((_, step) => call("execute", authenticate, `sign_in_${step}`)),
         ...(then.update === true ? moveSite : []),
+        ...(then.readBack === true
+          ? [call("execute", { ...pureExample, target: "liveBrowser" }, "read_back")]
+          : []),
         ...(then.publish === true
           ? [call("execute", pureExample, "example"), call("finish_build", finishBuild, "finish")]
           : []),
@@ -1790,6 +1803,22 @@ const hostRefusedAfter = (
       ][index] ?? prose("Stopping."),
     {
       reviewAndExecute: (submitted, beforeDispatch = () => Effect.void) => {
+        // A live step other than the sign-in reads a file back, refused before it runs.
+        if (
+          submitted.purpose !== "authenticate" &&
+          "target" in submitted &&
+          submitted.target === "liveBrowser"
+        )
+          return Effect.succeed({
+            executionId: "execution_read_back",
+            status: "unsupported" as const,
+            effect: "not_sent" as const,
+            observations: fileReadbackRefusal(
+              new Map([["explore/export.mjs", "const reader = new FileReader();"]]),
+              liveStep,
+              false,
+            ),
+          });
         if (submitted.purpose !== "authenticate")
           return beforeDispatch({ reviewId: "review_example", action: "read" }).pipe(
             Effect.as({
@@ -1822,6 +1851,7 @@ const hostRefusedAfter = (
 };
 const refusedFormRecord = { source: "sign_in_step", code: "AutofillRefused", check: "destination" };
 const refusedUpdateRecord = { source: "task_update", reason: "change_unsupported" };
+const refusedReadBackRecord = { source: "source_rule", rule: "file_readback" };
 const refusedPublicationRecord = {
   source: "publication",
   code: "PublicationUnavailable",
@@ -1829,7 +1859,8 @@ const refusedPublicationRecord = {
 };
 
 // While the sign-in never confirmed, a host refusal apart from it keeps a host_refused report's
-// reason: a sign-in form the host refused after the login went out, or a site change it refused.
+// reason: a sign-in form the host refused after the login went out, a site change it refused, or a
+// step a host source rule refused before it ran.
 // A later publication refusal, which may follow from the unconfirmed sign-in, neither hides it
 // nor ends the build as sign-in unavailable, and the record lists every check still standing.
 it.each([
@@ -1856,6 +1887,12 @@ it.each([
     steps: [submittedScreen],
     then: { update: true, publish: true },
     recorded: [refusedUpdateRecord, refusedPublicationRecord],
+  },
+  {
+    basis: "a step a host source rule refused",
+    steps: [submittedScreen],
+    then: { readBack: true },
+    recorded: [refusedReadBackRecord],
   },
   // The same form refused again after a later login went out is the latest sign-in event again.
   {

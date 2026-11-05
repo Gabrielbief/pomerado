@@ -17,9 +17,19 @@ import { isAuthoredSourcePath } from "./operation-source.js";
  */
 
 const quote = String.raw`\\?["'\x60]`;
+/**
+ * What code does where the host's file API does it instead, as the refusal names: the minter's to
+ * fix, not a rule no source gets past (`isFileReadbackRefusal`).
+ */
+const namedFixes = {
+  saveAs: "saves a download (use files.collect)",
+  setInputFiles: "sets a file input itself (use files.place)",
+  fileChooser: "handles a file chooser (use files.place)",
+  download: "handles a download (use files.collect)",
+} as const;
 /** Ways to move or read files outside the host, refused in any live step or published source. */
 const alwaysRefused: readonly (readonly [RegExp, string])[] = [
-  [/\.saveAs\s*\(/u, "saves a download (use files.collect)"],
+  [/\.saveAs\s*\(/u, namedFixes.saveAs],
   [/\bcreateReadStream\b/u, "reads a file"],
   [/\bFileReader\b/u, "reads a file's contents"],
   [/\breadAs(?:DataURL|Text|ArrayBuffer|BinaryString)\b/u, "reads a file's contents"],
@@ -36,11 +46,11 @@ const arrayMethods =
 const refusedWithFiles: readonly (readonly [RegExp, string])[] = [
   // Without files a build may still set an input from its own bytes, as tools built before
   // files.place did from base64 input; that pattern is deprecated, so their repairs still run.
-  [/\bsetInputFiles\b/u, "sets a file input itself (use files.place)"],
-  [new RegExp(String.raw`\bfilechooser\b`, "u"), "handles a file chooser (use files.place)"],
+  [/\bsetInputFiles\b/u, namedFixes.setInputFiles],
+  [new RegExp(String.raw`\bfilechooser\b`, "u"), namedFixes.fileChooser],
   [
     new RegExp(String.raw`(?:waitForEvent|\bon|\bonce|addListener)\s*\(\s*${quote}download`, "u"),
-    "handles a download (use files.collect)",
+    namedFixes.download,
   ],
   [/\bDataTransfer\b/u, "moves files between inputs"],
   [
@@ -104,7 +114,11 @@ export const fileReadbackRefusal = (
 
 /**
  * Whether a reason is a refusal `fileReadbackRefusal` gave, as a host returns it for the step it
- * refused: an `unsupported` execution's observations.
+ * refused (an `unsupported` execution's observations), for code the host's file API does not
+ * replace, such as reading a file's bytes back. A refusal that names `files.place` or
+ * `files.collect` to use instead is the minter's to fix, so it is not one.
  */
 export const isFileReadbackRefusal = (reason: unknown): boolean =>
-  typeof reason === "string" && reason.endsWith(refusalEnd);
+  typeof reason === "string" &&
+  reason.endsWith(refusalEnd) &&
+  !Object.values(namedFixes).some((does) => reason.endsWith(` ${does}${refusalEnd}`));
