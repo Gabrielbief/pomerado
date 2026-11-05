@@ -5,9 +5,10 @@
  * or ran while that test file ran alone, through tools/test-map-trace.ts. Maps are built only from
  * `main`, by trusted runs, never from a pull request. A pull request run only reads the newest one.
  *
- * Selection is shadow-only today: check.yml still runs every test, records which test files the
- * selection would have run and compares that with the results. It selects everything when it can't
- * see a change's reach:
+ * On a pull request, check.yml records which test files the selection would run and compares that
+ * with the results. Only while the repository variable TEST_SELECTION_ENFORCE is `true` does a pull
+ * request run just the selected test files; otherwise every test runs, and pushes to main always
+ * run every test. It selects everything when it can't see a change's reach:
  *
  * - no usable map, more than `maxChangedFiles` changed files, or a change to the toolchain, package
  *   manifests, test configuration, workflows or this selector;
@@ -22,6 +23,7 @@
  *   node tools/test-map.ts run --suite unit|browser [--shard k/n] --out partial.json
  *   node tools/test-map.ts merge --sha SHA --out test-map.json partial.json...
  *   node tools/test-map.ts select --base SHA --head SHA --out selection.json [--map test-map.json]
+ *     [--enforce]
  *   node tools/test-map.ts guard --base SHA --head SHA --selection selection.json [--warn]
  *   node tools/test-map.ts report --selection selection.json --out report.json results.json...
  */
@@ -194,6 +196,22 @@ export const select = (
   };
 };
 
+/** A Playwright file filter, a regular expression, that matches one spec file and no other. */
+export const playwrightFilter = (path: string): string =>
+  `${`/${path}`.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&")}$`;
+
+/**
+ * What the check and browser jobs run. They run a selection only when it is enforced; otherwise
+ * every test. `unit` lists Vitest file filters and `browser` Playwright file filters.
+ */
+export const jobInputs = (
+  selection: Selection,
+  enforce: boolean,
+): { run: "full" | "selected"; unit: readonly string[]; browser: readonly string[] } =>
+  enforce && selection.mode === "selected"
+    ? { run: "selected", unit: selection.unit, browser: selection.browser.map(playwrightFilter) }
+    : { run: "full", unit: [], browser: [] };
+
 /**
  * Checks a selection against its diff independently of `select`: a selection that runs no test
  * while more than documentation changed is wrong, whatever the map said.
@@ -352,8 +370,6 @@ interface Partial {
   >;
 }
 
-const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&");
-
 /** Runs one test file alone with the trace preload and returns what its processes recorded. */
 const runOne = async (root: string, suite: Suite, test: string, workers: number) => {
   const out = mkdtempSync(join(tmpdir(), "test-map-"));
@@ -365,7 +381,7 @@ const runOne = async (root: string, suite: Suite, test: string, workers: number)
           "exec",
           "playwright",
           "test",
-          `${escapeRegExp(`/${test}`)}$`,
+          playwrightFilter(test),
           `--workers=${workers}`,
           "--reporter=line",
         ];
@@ -523,6 +539,7 @@ const main = async () => {
       workers: { type: "string", default: "4" },
       parallel: { type: "string", default: "1" },
       warn: { type: "boolean", default: false },
+      enforce: { type: "boolean", default: false },
     },
   });
   const need = (name: keyof typeof values): string => {
@@ -561,12 +578,21 @@ const main = async () => {
     const chosen = select(typeof map === "string" ? undefined : map, changes, headFiles, readHead);
     const selection = typeof map === "string" ? { ...chosen, reasons: [map] } : chosen;
     writeFileSync(need("out"), `${JSON.stringify(selection, null, 2)}\n`);
+    const enforce = values.enforce === true;
+    const inputs = jobInputs(selection, enforce);
+    const output = process.env["GITHUB_OUTPUT"];
+    if (output !== undefined && output !== "")
+      appendFileSync(
+        output,
+        `run=${inputs.run}\nunit=${JSON.stringify(inputs.unit)}\nbrowser=${JSON.stringify(inputs.browser)}\n`,
+      );
+    const verb = enforce ? "runs" : "would run";
     const line =
       selection.mode === "full"
-        ? `Test selection would run every test: ${selection.reasons.join("; ")}`
-        : `Test selection would run ${selection.unit.length} unit and ${selection.browser.length} browser test files`;
+        ? `Test selection ${verb} every test: ${selection.reasons.join("; ")}`
+        : `Test selection ${verb} ${selection.unit.length} unit and ${selection.browser.length} browser test files`;
     process.stdout.write(`${line}\n`);
-    summary(`### Test selection (shadow)\n\n${line}\n`);
+    summary(`### Test selection${enforce ? "" : " (shadow)"}\n\n${line}\n`);
   } else if (command === "guard") {
     const selection = JSON.parse(readFileSync(need("selection"), "utf8")) as Selection;
     const problem = guard(selection, changesBetween(need("base"), need("head")));

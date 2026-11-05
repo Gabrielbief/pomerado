@@ -9,8 +9,8 @@
 #   CI_RUNNER_TRUSTED variable names. The check job, which builds the tarball release publishes,
 #   runs on a GitHub-hosted runner. A merge queue needs its own trigger and route here first.
 # A runner either variable names must have 4 vCPUs, as the browser job's --workers=4 expects.
-# An unset variable falls back to a Blacksmith runner. The scans, test selection's shadow jobs and
-# the `CI` job are short and always run on GitHub-hosted runners.
+# An unset variable falls back to a Blacksmith runner. The scans, test selection's jobs and the
+# `CI` job are short and always run on GitHub-hosted runners.
 # typescript/tests/unit/ci-runner-routing.test.ts checks these routes for forks, outside authors,
 # maintainers and pushes.
 # This routing is not a security boundary: a fork's pull request runs its own copy of this file, so
@@ -109,6 +109,7 @@ jobs:
   # On a push to main it builds the tarball the release workflow publishes, so there it runs on a
   # GitHub-hosted runner, a fresh machine, never on CI_RUNNER_TRUSTED.
   check:
+    needs: [test-selection]
     runs-on: >-
       ${{ github.repository == 'Pomerado/pomerado' && github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
@@ -135,8 +136,26 @@ jobs:
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm typecheck
       - run: corepack pnpm build
-      # The JSON results feed test selection's shadow report on pull requests.
-      - run: corepack pnpm test --reporter=default --reporter=json --outputFile.json=test-results/unit-results.json
+      # Every unit test, or only the selected ones while selection is enforced on a pull request.
+      # The JSON results feed test selection's report on pull requests.
+      - name: Unit tests
+        shell: bash
+        env:
+          RUN: ${{ needs.test-selection.outputs.run }}
+          UNIT: ${{ needs.test-selection.outputs.unit }}
+        run: |
+          results=(--reporter=default --reporter=json --outputFile.json=test-results/unit-results.json)
+          if [ "$RUN" != selected ]; then
+            corepack pnpm test "${results[@]}"
+            exit
+          fi
+          mapfile -t files < <(node -e 'for (const file of JSON.parse(process.env.UNIT)) console.log(file)')
+          if [ "${#files[@]}" -eq 0 ]; then
+            node tools/check-host-protocol.ts
+            echo "Test selection chose no unit test file."
+          else
+            corepack pnpm test "${results[@]}" "${files[@]}"
+          fi
       - name: Validate packed package outside the checkout
         shell: bash
         run: |
@@ -209,6 +228,7 @@ jobs:
   # the tests run the built package. Every shard runs to the end, so one run reports every failure.
   browser:
     name: Browser tests (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: [test-selection]
     runs-on: >-
       ${{ github.repository == 'Pomerado/pomerado'
       && github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -235,13 +255,28 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: npm pkg set version="$VERSION"
-      - run: corepack enable
-      - run: corepack pnpm install --frozen-lockfile
-      - run: corepack pnpm build
+      # A shard has nothing to do when selection is enforced and chose no browser test file.
+      - name: Check for selected browser tests
+        id: chosen
+        env:
+          RUN: ${{ needs.test-selection.outputs.run }}
+          BROWSER: ${{ needs.test-selection.outputs.browser }}
+        run: |
+          if [ "$RUN" = selected ] && [ "$BROWSER" = "[]" ]; then
+            echo "none=true" >> "$GITHUB_OUTPUT"
+            echo "Test selection chose no browser test file."
+          fi
+      - if: steps.chosen.outputs.none != 'true'
+        run: corepack enable
+      - if: steps.chosen.outputs.none != 'true'
+        run: corepack pnpm install --frozen-lockfile
+      - if: steps.chosen.outputs.none != 'true'
+        run: corepack pnpm build
       # A runner that can't install packages, neither as root nor through sudo, must already hold
       # Chromium's system libraries, as a self-hosted runner's image does, so only Chromium itself
       # is installed there.
       - name: Install Chromium
+        if: steps.chosen.outputs.none != 'true'
         shell: bash
         run: |
           if [ "$(id -u)" = 0 ] || sudo -n true 2>/dev/null; then
@@ -249,8 +284,22 @@ jobs:
           else
             corepack pnpm exec playwright install chromium
           fi
-      # One worker per vCPU. Every runner this job uses has 4 vCPUs.
-      - run: corepack pnpm test:browser --shard=${{ matrix.shard }}/${{ strategy.job-total }} --workers=4
+      # One worker per vCPU. Every runner this job uses has 4 vCPUs. While selection is enforced,
+      # each spec file it chose is a Playwright file filter, and a shard left with no test passes.
+      - name: Browser tests
+        if: steps.chosen.outputs.none != 'true'
+        shell: bash
+        env:
+          RUN: ${{ needs.test-selection.outputs.run }}
+          BROWSER: ${{ needs.test-selection.outputs.browser }}
+          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+        run: |
+          filters=()
+          if [ "$RUN" = selected ]; then
+            mapfile -t filters < <(node -e 'for (const filter of JSON.parse(process.env.BROWSER)) console.log(filter)')
+            filters+=(--pass-with-no-tests)
+          fi
+          corepack pnpm test:browser "${filters[@]}" --shard="$SHARD" --workers=4
       - if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -258,31 +307,43 @@ jobs:
           path: test-results/browser-results.json
           retention-days: 7
           if-no-files-found: ignore
-  # Test selection in shadow (tools/test-map.ts). On a pull request it works out which test files a
-  # selection would run, from the newest test map main's test-map.yml built, while every test still
-  # runs. The report job then compares that with the results. Neither job is in CI's `needs`, so
-  # shadow selection never decides a run. The repository variable TEST_SELECTION_DISABLED=true
-  # turns both off. The map is read from a trusted run on main; nothing here builds one.
+  # Test selection (tools/test-map.ts). On a pull request it works out which test files the change
+  # needs, from the newest test map main's test-map.yml built; a pull request never builds a map.
+  # Only while the repository variable TEST_SELECTION_ENFORCE is `true` do the check and browser
+  # jobs run just those files, and the guard then fails a run whose selection tests nothing for a
+  # change beyond documentation. Otherwise every test runs and the selection is only recorded.
+  # Pushes to main always run every test, as does a pull request labelled `ci:full`, from its next
+  # push, since a re-run keeps the labels of the run it repeats. TEST_SELECTION_DISABLED=true turns
+  # selection off.
+  # The report job compares the selection with the results and never decides a run.
   test-selection:
-    name: Test selection (shadow)
-    if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
+    name: Test selection
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       actions: read
+    outputs:
+      run: ${{ steps.select.outputs.run || 'full' }}
+      unit: ${{ steps.select.outputs.unit || '[]' }}
+      browser: ${{ steps.select.outputs.browser || '[]' }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: github.event_name != 'pull_request' || vars.TEST_SELECTION_DISABLED == 'true'
+        run: echo "Every test runs."
+      - if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.22.1
           package-manager-cache: false
       # No map, or one that can't be read, selects everything. Only a scheduled or dispatched run
       # on this repository's main counts; a pull request's own copy of test-map.yml never does.
       - name: Download the newest test map from main
+        if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -294,21 +355,32 @@ jobs:
             gh run download "$newest" -R "$REPO" -n test-map -D "$RUNNER_TEMP/map" || echo "::warning::Could not download the test map"
           fi
       - name: Select tests
+        id: select
+        if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          ENFORCE: ${{ vars.TEST_SELECTION_ENFORCE == 'true' && !contains(github.event.pull_request.labels.*.name, 'ci:full') }}
         run: |
-          node tools/test-map.ts select --map "$RUNNER_TEMP/map/test-map.json" --base "$BASE" --head "$HEAD" --out selection.json
-          node tools/test-map.ts guard --warn --selection selection.json --base "$BASE" --head "$HEAD"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          if [ "$ENFORCE" = true ]; then
+            node tools/test-map.ts select --enforce --map "$RUNNER_TEMP/map/test-map.json" --base "$BASE" --head "$HEAD" --out selection.json
+            node tools/test-map.ts guard --selection selection.json --base "$BASE" --head "$HEAD"
+          else
+            node tools/test-map.ts select --map "$RUNNER_TEMP/map/test-map.json" --base "$BASE" --head "$HEAD" --out selection.json
+            node tools/test-map.ts guard --warn --selection selection.json --base "$BASE" --head "$HEAD"
+          fi
+      - if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-selection
           path: selection.json
           retention-days: 30
   test-selection-report:
-    name: Test selection report (shadow)
+    name: Test selection report
     needs: [test-selection, check, browser]
-    if: always() && needs.test-selection.result == 'success'
+    if: >-
+      always() && github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
+      && needs.test-selection.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -338,11 +410,11 @@ jobs:
           retention-days: 30
   # `CI` is one status for the whole run. It fails unless every job it needs succeeded, so a
   # skipped or cancelled job never passes for a green one. Add every new job to `needs`, except
-  # test selection's shadow jobs, which never decide a run.
+  # test selection's report, which never decides a run.
   ci:
     name: CI
     if: always()
-    needs: [check, browser, secret-scan, content-scan]
+    needs: [test-selection, check, browser, secret-scan, content-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

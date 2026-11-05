@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   readResults,
   guard,
+  jobInputs,
   merge,
   normalize,
   readMap,
@@ -157,6 +158,36 @@ describe("select", () => {
       { files },
     );
     expect(selection.mode).toBe("full");
+  });
+});
+
+describe("job inputs", () => {
+  const selected = {
+    mode: "selected",
+    reasons: [],
+    mapSha: null,
+    unit: [unitA],
+    browser: ["typescript/tests/browser/foo.spec.ts"],
+  } as const;
+
+  it("run the selection only when it is enforced, and every test otherwise", () => {
+    expect(jobInputs(selected, false)).toEqual({ run: "full", unit: [], browser: [] });
+    expect(jobInputs({ ...selected, mode: "full" }, true)).toEqual({
+      run: "full",
+      unit: [],
+      browser: [],
+    });
+    const enforced = jobInputs(selected, true);
+    expect(enforced).toMatchObject({ run: "selected", unit: [unitA] });
+  });
+
+  it("filter Playwright to each selected spec file and no file whose name ends the same way", () => {
+    // Playwright reads each filter as a regular expression over the absolute file path.
+    const [filter = ""] = jobInputs(selected, true).browser;
+    const matches = (path: string) => new RegExp(filter, "giu").test(path);
+    expect(matches("/checkout/typescript/tests/browser/foo.spec.ts")).toBe(true);
+    expect(matches("/checkout/typescript/tests/browser/other-foo.spec.ts")).toBe(false);
+    expect(matches("/checkout/typescript/tests/browser/fooXspec.ts")).toBe(false);
   });
 });
 
