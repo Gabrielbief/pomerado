@@ -558,16 +558,17 @@ const codeScreenAt = (at = origin) => ({
 it("replays a version 14 recipe's recorded way in, and picks only among the code methods beside it", async () => {
   // One screen offers a password, a phone number or a code by email or text. Each way's recipe
   // records the route its own sign-in took there.
-  const waysStep = (submit: string) => ({
+  const ways = [
+    { method: "password" as const, selector: "#with-password" },
+    { method: "identifier_phone" as const, selector: "#with-phone" },
+    { method: "email" as const, selector: "#with-email" },
+    { method: "sms" as const, selector: "#with-text" },
+  ];
+  const waysStep = (submit: string, methods = ways) => ({
     page: `${origin}/ways`,
     fields: [],
     submit,
-    methods: [
-      { method: "password" as const, selector: "#with-password" },
-      { method: "identifier_phone" as const, selector: "#with-phone" },
-      { method: "email" as const, selector: "#with-email" },
-      { method: "sms" as const, selector: "#with-text" },
-    ],
+    methods,
   });
   const wayRecipe = (...steps: SignInRecipe["steps"][number][]) =>
     ({ version: 14, steps, signedIn: { selector: "#account" } }) as SignInRecipe;
@@ -594,6 +595,17 @@ it("replays a version 14 recipe's recorded way in, and picks only among the code
     ],
   });
   expect(codeSite.fills.map(({ page }) => page)).toEqual(["ways", "code"]);
+  // Beside a way in, a lone code method is the code path's route, so nothing is asked about it.
+  const lone = owner();
+  const passwordOrEmail = ways.filter(({ method }) => method === "password" || method === "email");
+  expect(
+    await signIn(
+      wayRecipe(waysStep("#with-email", passwordOrEmail), codeScreenAt()),
+      fakeSite({ ways: true }),
+      lone.ask,
+    ),
+  ).toEqual(Either.right({ alreadySignedIn: false }));
+  expect(kinds(lone.asked)).toEqual(["credential:missing_credentials", "code"]);
 });
 
 it("signs in when the code lands on a chooser the site shows before any page with the marker", async () => {
