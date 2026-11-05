@@ -234,6 +234,12 @@ interface FillProgress {
   /** Whether any value may have reached the page. */
   typed: boolean;
   /**
+   * The host began putting a value in, so some of it may have reached the page even when the
+   * insertion was refused or its answer lost. Evidence then names only what it would once
+   * anything was typed (`evidenceOrigins`).
+   */
+  keyed?: true;
+  /**
    * The fields the next call checks still hold something: the one the host typed last, or every
    * field it typed before a submit it clicks again.
    */
@@ -382,11 +388,12 @@ const guardOrigins = (input: CallInput) =>
   namedAfterTyping(input.inspection) ?? judgedOrigins(input.inspection);
 
 /**
- * The origins a refusal's evidence may name: any until something was typed into the page, then
- * only the guard's (`guardOrigins`), since page code may have put a typed value in another.
+ * The origins a refusal's evidence may name: any until the host began putting a value into the
+ * page (`keyed`), then only the guard's (`guardOrigins`), since page code may have put a typed
+ * value in another.
  */
 const evidenceOrigins = (input: CallInput, progress: FillProgress) =>
-  progress.typed || input.inspection.judgedBeforeTyping !== undefined
+  progress.typed || progress.keyed === true || input.inspection.judgedBeforeTyping !== undefined
     ? guardOrigins(input)
     : undefined;
 
@@ -981,6 +988,7 @@ const afterFieldCall = (
     if (answer.focused) {
       const value = input.values[index] ?? "";
       const slot = input.step.fields[index]?.slot;
+      progress.keyed = true;
       const typing = yield* Effect.either(
         input.keyboard.insertText(
           {
