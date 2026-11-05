@@ -14,10 +14,17 @@
  *   for the workflow's matrix. A test without a recorded duration counts as the median of its
  *   file's recorded tests, or of all of them. Without any durations, every test counts as
  *   `--default-seconds`, which splits by count as Playwright does.
- * - `record` reads one shard's JSON report. It writes each test's duration, and fails when a test
- *   the plan gave the shard has no result, so a test the list missed can't pass unnoticed, or when
- *   a test took longer than `--budget-seconds`. One test longer than a shard's share sets the
- *   shortest time the whole run can take, so split such a test or give it a controlled clock.
+ *   With `--diff`, the output of `git diff --unified=0` for a pull request, it also writes
+ *   `repeat.txt`, the tests the change touches that fit the target when each runs three times, and
+ *   prints `repeat=true` when there are any. With `--quarantine`, it fails on an entry that names a
+ *   test that no longer exists.
+ * - `record` reads one shard's JSON report, and with `--rerun` the report of running its failed
+ *   tests once more. It writes each test's duration. It fails when a test failed both times, unless
+ *   the quarantine list names it; a test that passed the second time is flaky and only warns. It
+ *   also fails when a test the plan gave the shard has no result, so a test the list missed can't
+ *   pass unnoticed, or when a test took longer than `--budget-seconds`. One test longer than a
+ *   shard's share sets the shortest time the whole run can take, so split such a test or give it a
+ *   controlled clock.
  *
  * A test-list line names a file and a title path, and Playwright runs every test whose title path
  * starts with it. A file is planned whole, as one line, when its tests can't be named apart that
@@ -27,8 +34,10 @@
  * Usage:
  *   node tools/browser-shards.ts plan --tests <list.json> --durations <dir> --out <dir>
  *     [--target-seconds 80] [--workers 4] [--max-shards 16] [--default-seconds 3]
- *   node tools/browser-shards.ts record --results <report.json> --expected <shard-k.json>
- *     --out <durations.json> [--budget-seconds 80]
+ *     [--quarantine <quarantine.json>] [--diff <changes.diff>] [--repeat-each 3]
+ *   node tools/browser-shards.ts record --results <report.json> [--rerun <report.json>]
+ *     --expected <shard-k.json> [--quarantine <quarantine.json>] --out <durations.json>
+ *     [--budget-seconds 80]
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -54,12 +63,20 @@ interface ReportSuite {
 interface ReportSpec {
   readonly title?: unknown;
   readonly file?: unknown;
-  readonly tests?: readonly { readonly results?: readonly { readonly duration?: unknown }[] }[];
+  readonly line?: unknown;
+  readonly tests?: readonly {
+    readonly status?: unknown;
+    readonly results?: readonly { readonly duration?: unknown }[];
+  }[];
 }
 
-interface ReportTest extends TestId {
+export interface ReportTest extends TestId {
+  /** The line of the test's declaration in its file. */
+  readonly line: number;
   /** The last attempt's duration in seconds, when the report has one. */
   readonly seconds: number | undefined;
+  /** Playwright's outcome: `expected`, `unexpected`, `flaky` or `skipped`. */
+  readonly status: string | undefined;
 }
 
 /** Every test in a Playwright JSON report, or in the output of `--list --reporter=json`. */
@@ -74,7 +91,9 @@ export const reportTests = (report: unknown): ReportTest[] => {
         tests.push({
           file: spec.file,
           titles: [...titles, spec.title],
+          line: typeof spec.line === "number" ? spec.line : 0,
           seconds: typeof duration === "number" && Number.isFinite(duration) ? duration / 1000 : undefined,
+          status: typeof test.status === "string" ? test.status : undefined,
         });
       }
     }
@@ -251,6 +270,78 @@ export const plan = (
   return { shards, known, total: tests.length };
 };
 
+/** The new-side lines that `git diff --unified=0` changes, by file. */
+export const changedLines = (diff: string): Map<string, Set<number>> => {
+  const changed = new Map<string, Set<number>>();
+  let lines: Set<number> | undefined;
+  for (const text of diff.split("\n")) {
+    if (text.startsWith("+++ ")) {
+      const path = text.slice(4);
+      lines = path.startsWith("b/") ? new Set() : undefined;
+      if (lines !== undefined) changed.set(path.slice(2), lines);
+      continue;
+    }
+    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/u.exec(text);
+    if (hunk === null || lines === undefined) continue;
+    const start = Number(hunk[1]);
+    const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
+    // A deletion has no new lines, so it touches the lines on both sides of it.
+    if (count === 0) for (const line of [start, start + 1]) lines.add(line);
+    for (let line = start; line < start + count; line += 1) lines.add(line);
+  }
+  return changed;
+};
+
+/**
+ * Keys of the tests a change touches. A test spans from its declaration to the next test's, so
+ * a change inside its body touches it. A change above a file's first test, such as to an import or
+ * a shared helper, touches every test in the file.
+ */
+export const changedTests = (
+  tests: readonly ReportTest[],
+  changed: ReadonlyMap<string, ReadonlySet<number>>,
+  testDirectory: string,
+): Set<string> => {
+  const touched = new Set<string>();
+  for (const [file, fileTests] of Map.groupBy(tests, (test) => test.file)) {
+    const lines = changed.get(`${testDirectory}/${file}`);
+    if (lines === undefined || lines.size === 0) continue;
+    const starts = [...new Set(fileTests.map((test) => test.line))].sort((a, b) => a - b);
+    const first = starts[0] ?? 0;
+    const above = [...lines].some((line) => line < first);
+    for (const test of fileTests) {
+      const next = starts.find((start) => start > test.line) ?? Number.POSITIVE_INFINITY;
+      if (above || [...lines].some((line) => line >= test.line && line < next)) touched.add(testKey(test));
+    }
+  }
+  return touched;
+};
+
+/**
+ * The units holding changed tests that fit the budget when each runs `repeatEach` times, shortest
+ * first, and the ones left out.
+ */
+export const repeatUnits = (
+  units: readonly Unit[],
+  changed: ReadonlySet<string>,
+  repeatEach: number,
+  budgetSeconds: number,
+): { repeated: Unit[]; skipped: Unit[] } => {
+  const candidates = units
+    .filter((unit) => unit.tests.some((test) => changed.has(test)))
+    .sort((a, b) => a.seconds - b.seconds || (a.line < b.line ? -1 : 1));
+  const repeated: Unit[] = [];
+  const skipped: Unit[] = [];
+  let seconds = 0;
+  for (const unit of candidates) {
+    if ((seconds + unit.seconds) * repeatEach <= budgetSeconds) {
+      repeated.push(unit);
+      seconds += unit.seconds;
+    } else skipped.push(unit);
+  }
+  return { repeated, skipped };
+};
+
 /** Spec files that put a describe block in serial mode. */
 const findSerialFiles = (testDirectory: string, files: ReadonlySet<string>): Set<string> =>
   new Set(
@@ -289,6 +380,9 @@ const runPlan = (args: string[]) => {
       workers: { type: "string" },
       "max-shards": { type: "string" },
       "default-seconds": { type: "string" },
+      quarantine: { type: "string" },
+      diff: { type: "string" },
+      "repeat-each": { type: "string" },
     },
   });
   if (values.tests === undefined || values.out === undefined)
@@ -312,6 +406,24 @@ const runPlan = (args: string[]) => {
     writeFileSync(join(values.out ?? "", `shard-${index + 1}.json`), `${JSON.stringify(shard.tests)}\n`);
   });
   output(`shards=${JSON.stringify(result.shards.map((_, index) => index + 1))}`);
+  const keys = new Set(tests.map(testKey));
+  const stale = readQuarantine(values.quarantine).filter((entry) => !keys.has(entry.test));
+  if (stale.length > 0)
+    throw new Error(`Quarantined tests that no longer exist, to remove: ${stale.map((entry) => entry.test).join("; ")}`);
+  if (values.diff !== undefined) {
+    const repeatEach = number(values["repeat-each"], 3, "repeat-each");
+    const { units } = planUnits(tests, durations, serialFiles, options.defaultSeconds);
+    const changed = changedTests(tests, changedLines(readFileSync(values.diff, "utf8")), values["test-dir"]);
+    const { repeated, skipped } = repeatUnits(units, changed, repeatEach, options.targetSeconds * options.workers);
+    writeFileSync(join(values.out, "repeat.txt"), `${repeated.map((unit) => unit.line).join("\n")}\n`);
+    output(`repeat=${repeated.length > 0}`);
+    summary(
+      [
+        `Changed browser tests to repeat ${repeatEach} times: ${repeated.reduce((sum, unit) => sum + unit.tests.length, 0)}.`,
+        ...skipped.map((unit) => `- not repeated, over the time budget: ${unit.line}`),
+      ].join("\n"),
+    );
+  }
   if (result.known === 0)
     console.log("::warning::No recorded browser test durations were found, so the shards split by test count.");
   summary(
@@ -326,41 +438,121 @@ const runPlan = (args: string[]) => {
   );
 };
 
+/** A test kept from failing CI while its owner fixes it. */
+export interface QuarantineEntry {
+  readonly test: string;
+  /** The GitHub login of the person fixing it. */
+  readonly owner: string;
+  /** The public issue that tracks the fix. */
+  readonly issue: string;
+}
+
+/** Reads the quarantine list, and fails on an entry without an owner or issue. */
+export const readQuarantine = (path: string | undefined): QuarantineEntry[] => {
+  if (path === undefined) return [];
+  const parsed = JSON.parse(readFileSync(path, "utf8")) as { tests?: unknown };
+  if (!Array.isArray(parsed.tests)) throw new Error(`${path} needs a "tests" array.`);
+  return parsed.tests.map((entry: unknown) => {
+    const { test, owner, issue } = (entry ?? {}) as Record<string, unknown>;
+    if (typeof test !== "string" || typeof owner !== "string" || owner === "" || typeof issue !== "string")
+      throw new Error(`Each quarantined test in ${path} needs "test", "owner" and "issue": ${JSON.stringify(entry)}`);
+    if (!/^https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+$/u.test(issue))
+      throw new Error(`${test} needs its issue as a full GitHub issue URL, not ${issue}.`);
+    return { test, owner, issue };
+  });
+};
+
+export interface Verdict {
+  /** Tests that failed, then passed when run again in a fresh process. */
+  readonly flaky: string[];
+  /** Quarantined tests that failed both times, which don't fail the shard. */
+  readonly quarantined: QuarantineEntry[];
+  /** Tests that failed both times and fail the shard. */
+  readonly failed: string[];
+  readonly problems: string[];
+}
+
+/**
+ * Judges a shard from its report and, when tests failed, the report of running them once more.
+ * Missing planned tests and tests over the time budget are problems too.
+ */
+export const judge = (
+  tests: readonly ReportTest[],
+  rerun: readonly ReportTest[] | undefined,
+  expected: readonly string[] | undefined,
+  quarantine: readonly QuarantineEntry[],
+  budgetSeconds: number | undefined,
+): Verdict => {
+  const problems: string[] = [];
+  if (expected !== undefined) {
+    const reported = new Set(tests.map(testKey));
+    const missing = expected.filter((key) => !reported.has(key));
+    if (missing.length > 0)
+      problems.push(`${missing.length} planned tests have no result, such as ${missing.slice(0, 5).join("; ")}`);
+  }
+  if (budgetSeconds !== undefined)
+    for (const test of tests)
+      if (test.status !== "unexpected" && test.seconds !== undefined && test.seconds > budgetSeconds)
+        problems.push(
+          `${testKey(test)} took ${Math.round(test.seconds)} s, over the ${budgetSeconds} s budget for one ` +
+            "browser test. Split it, or give its waits a controlled clock.",
+        );
+  const again = new Map((rerun ?? []).map((test) => [testKey(test), test.status]));
+  const quarantined = new Map(quarantine.map((entry) => [entry.test, entry]));
+  const verdict: Verdict = { flaky: [], quarantined: [], failed: [], problems };
+  for (const test of tests.filter((test) => test.status === "unexpected")) {
+    const key = testKey(test);
+    const status = again.get(key);
+    const entry = quarantined.get(key);
+    if (status === "expected" || status === "flaky") verdict.flaky.push(key);
+    else if (entry !== undefined) verdict.quarantined.push(entry);
+    else verdict.failed.push(key);
+  }
+  return verdict;
+};
+
 const runRecord = (args: string[]) => {
   const { values } = parseArgs({
     args,
     options: {
       results: { type: "string" },
+      rerun: { type: "string" },
       expected: { type: "string" },
+      quarantine: { type: "string" },
       out: { type: "string" },
       "budget-seconds": { type: "string" },
     },
   });
   if (values.results === undefined || values.out === undefined) throw new Error("record needs --results and --out.");
-  const tests = reportTests(JSON.parse(readFileSync(values.results, "utf8")));
+  const read = (path: string) => reportTests(JSON.parse(readFileSync(path, "utf8")));
+  const tests = read(values.results);
   const durations: Record<string, number> = {};
   for (const test of tests)
     if (test.seconds !== undefined) durations[testKey(test)] = Math.round(test.seconds * 10) / 10;
   writeFileSync(values.out, `${JSON.stringify(durations)}\n`);
-  const problems: string[] = [];
-  if (values.expected !== undefined) {
-    const reported = new Set(tests.map(testKey));
-    const expected = JSON.parse(readFileSync(values.expected, "utf8")) as string[];
-    const missing = expected.filter((key) => !reported.has(key));
-    if (missing.length > 0)
-      problems.push(`${missing.length} planned tests have no result, such as ${missing.slice(0, 5).join("; ")}`);
+  const verdict = judge(
+    tests,
+    values.rerun === undefined ? undefined : read(values.rerun),
+    values.expected === undefined ? undefined : (JSON.parse(readFileSync(values.expected, "utf8")) as string[]),
+    readQuarantine(values.quarantine),
+    values["budget-seconds"] === undefined ? undefined : number(values["budget-seconds"], 0, "budget-seconds"),
+  );
+  const lines: string[] = [];
+  for (const key of verdict.flaky) {
+    console.log(`::warning::Flaky: ${key} failed, then passed when run again in a fresh process.`);
+    lines.push(`- flaky (failed, then passed in a fresh process): ${key}`);
   }
-  if (values["budget-seconds"] !== undefined) {
-    const budget = number(values["budget-seconds"], 0, "budget-seconds");
-    for (const test of tests)
-      if (test.seconds !== undefined && test.seconds > budget)
-        problems.push(
-          `${testKey(test)} took ${Math.round(test.seconds)} s, over the ${budget} s budget for one ` +
-            "browser test. Split it, or give its waits a controlled clock.",
-        );
+  for (const entry of verdict.quarantined) {
+    console.log(`::warning::Quarantined, owned by ${entry.owner} (${entry.issue}): ${entry.test} failed twice.`);
+    lines.push(`- quarantined, failed twice, owner ${entry.owner}, ${entry.issue}: ${entry.test}`);
   }
-  for (const problem of problems) console.log(`::error::${problem}`);
-  if (problems.length > 0) process.exitCode = 1;
+  for (const key of verdict.failed) {
+    console.log(`::error::Failed twice: ${key}`);
+    lines.push(`- failed twice: ${key}`);
+  }
+  for (const problem of verdict.problems) console.log(`::error::${problem}`);
+  if (lines.length > 0) summary(["Browser test failures in this shard:", ...lines].join("\n"));
+  if (verdict.failed.length > 0 || verdict.problems.length > 0) process.exitCode = 1;
 };
 
 if (import.meta.main) {
