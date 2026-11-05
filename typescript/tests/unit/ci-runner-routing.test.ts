@@ -1,0 +1,208 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Evaluator, Lexer, Parser, data } from "@actions/expressions";
+import { describe, expect, it } from "vitest";
+
+// Evaluates every job's runs-on in .github/workflows with GitHub's own expression library, for
+// pull requests from forks, outside authors and maintainers, and for pushes. A fork's pull request
+// can edit its own copy of a workflow, so this checks the routes this repository's copy picks, not
+// a security boundary; check.yml's header says what the boundary is.
+
+const workflows = fileURLToPath(new URL("../../../.github/workflows/", import.meta.url));
+const repository = "Pomerado/pomerado";
+const githubHosted = "ubuntu-latest";
+const fallback = "blacksmith-4vcpu-ubuntu-2404";
+const variables = { CI_RUNNER_MAINTAINER: "maintainer-runner", CI_RUNNER_TRUSTED: "trusted-runner" };
+const associations = [
+  "OWNER",
+  "MEMBER",
+  "COLLABORATOR",
+  "CONTRIBUTOR",
+  "FIRST_TIMER",
+  "FIRST_TIME_CONTRIBUTOR",
+  "MANNEQUIN",
+  "NONE",
+] as const;
+
+interface Job {
+  readonly workflow: string;
+  readonly job: string;
+  /** The runs-on value, with any folded lines joined. */
+  readonly runsOn: string;
+  readonly usesEnvironment: boolean;
+}
+
+/** Each job's runs-on and whether it names an environment, read line by line. */
+function jobsOf(workflow: string, text: string): Job[] {
+  const jobs: Job[] = [];
+  const lines = text.split("\n");
+  let inJobs = false;
+  let current: { job: string; runsOn?: string; usesEnvironment: boolean } | undefined;
+  const flush = () => {
+    if (current?.runsOn !== undefined)
+      jobs.push({ workflow, job: current.job, runsOn: current.runsOn, usesEnvironment: current.usesEnvironment });
+  };
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] ?? "";
+    if (/^\S/.test(line)) {
+      flush();
+      current = undefined;
+      inJobs = line.startsWith("jobs:");
+      continue;
+    }
+    if (!inJobs) continue;
+    const job = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(line);
+    if (job) {
+      flush();
+      current = { job: job[1] ?? "", usesEnvironment: false };
+      continue;
+    }
+    if (current === undefined) continue;
+    if (/^ {4}environment:/.test(line)) current.usesEnvironment = true;
+    const runsOn = /^ {4}runs-on:\s*(.*)$/.exec(line);
+    if (!runsOn) continue;
+    const value = (runsOn[1] ?? "").trim();
+    if (value !== ">-" && value !== ">") {
+      current.runsOn = value;
+      continue;
+    }
+    const folded: string[] = [];
+    while (/^ {6,}\S/.test(lines[index + 1] ?? "")) folded.push((lines[++index] ?? "").trim());
+    current.runsOn = folded.join(" ");
+  }
+  flush();
+  return jobs;
+}
+
+const allJobs = readdirSync(workflows)
+  .filter((name) => name.endsWith(".yml"))
+  .flatMap((name) => jobsOf(name, readFileSync(join(workflows, name), "utf8")));
+
+/** Converts plain JSON into the library's data, through JSON.parse with its reviver. */
+const toData = (value: unknown) => JSON.parse(JSON.stringify(value), data.reviver) as data.Dictionary;
+
+/** The runner a runs-on value picks for the given contexts. */
+function runnerFor(runsOn: string, contexts: { github: unknown; vars: unknown }): string {
+  const expression = /^\$\{\{([\s\S]*)\}\}$/.exec(runsOn);
+  if (!expression) return runsOn;
+  const lexed = new Lexer(expression[1] ?? "").lex();
+  const parsed = new Parser(lexed.tokens, ["github", "vars"], []).parse();
+  return new Evaluator(parsed, toData(contexts)).evaluate().coerceString();
+}
+
+interface Run {
+  readonly repository?: string;
+  readonly event: string;
+  readonly ref?: string;
+  readonly headRepository?: string;
+  readonly association?: string;
+  readonly vars?: Readonly<Record<string, string>>;
+}
+
+const contextsOf = (run: Run) => ({
+  github: {
+    repository: run.repository ?? repository,
+    event_name: run.event,
+    ref: run.ref ?? "refs/heads/main",
+    event:
+      run.event === "pull_request"
+        ? {
+            pull_request: {
+              head: { repo: { full_name: run.headRepository ?? repository } },
+              author_association: run.association ?? "NONE",
+            },
+          }
+        : {},
+  },
+  vars: run.vars ?? variables,
+});
+
+/** Every distinct runner the run's jobs pick, across every workflow. */
+const runnersFor = (run: Run, jobs: readonly Job[] = allJobs) =>
+  new Set(jobs.map((job) => runnerFor(job.runsOn, contextsOf(run))));
+
+const routed = allJobs.filter((job) => job.runsOn.includes("${{"));
+
+describe("CI runner routing", () => {
+  it("finds the routed check and browser jobs", () => {
+    expect(routed.map((job) => `${job.workflow}:${job.job}`).toSorted()).toEqual([
+      "check.yml:browser",
+      "check.yml:check",
+    ]);
+  });
+
+  it("runs every job of a fork's pull request on a GitHub-hosted runner, whoever opened it", () => {
+    for (const association of associations) {
+      for (const vars of [variables, {}]) {
+        expect(
+          runnersFor({ event: "pull_request", headRepository: "someone/pomerado", association, vars }),
+        ).toEqual(new Set([githubHosted]));
+      }
+    }
+  });
+
+  it("runs a pull request from a branch here by anyone but a maintainer on a GitHub-hosted runner", () => {
+    for (const association of associations.filter((name) => name !== "OWNER" && name !== "MEMBER")) {
+      expect(runnersFor({ event: "pull_request", association })).toEqual(new Set([githubHosted]));
+    }
+  });
+
+  it("runs a maintainer's pull request from a branch here on the maintainer runner", () => {
+    for (const association of ["OWNER", "MEMBER"]) {
+      for (const job of routed) {
+        expect(runnerFor(job.runsOn, contextsOf({ event: "pull_request", association }))).toBe(
+          "maintainer-runner",
+        );
+        expect(runnerFor(job.runsOn, contextsOf({ event: "pull_request", association, vars: {} }))).toBe(
+          fallback,
+        );
+      }
+    }
+  });
+
+  it("runs a push to main and a merge queue run on the trusted runner", () => {
+    for (const event of ["push", "merge_group"]) {
+      for (const job of routed) {
+        expect(runnerFor(job.runsOn, contextsOf({ event }))).toBe("trusted-runner");
+        expect(runnerFor(job.runsOn, contextsOf({ event, vars: {} }))).toBe(fallback);
+        // The maintainer runner never takes a trusted run.
+        expect(runnerFor(job.runsOn, contextsOf({ event, vars: { CI_RUNNER_MAINTAINER: "x" } }))).toBe(
+          fallback,
+        );
+      }
+    }
+  });
+
+  it("runs a push to another branch, and any run of another repository, on a GitHub-hosted runner", () => {
+    expect(runnersFor({ event: "push", ref: "refs/heads/feature" })).toEqual(new Set([githubHosted]));
+    for (const event of ["push", "merge_group", "pull_request"]) {
+      expect(
+        runnersFor({ repository: "someone/pomerado", event, headRepository: "someone/pomerado", association: "OWNER" }),
+      ).toEqual(new Set([githubHosted]));
+    }
+  });
+
+  it("runs every job that names an environment, and so holds its secrets, on a GitHub-hosted runner", () => {
+    const withSecrets = allJobs.filter((job) => job.usesEnvironment);
+    expect(withSecrets.length).toBeGreaterThan(0);
+    for (const run of [
+      { event: "push" },
+      { event: "workflow_dispatch" },
+      { event: "pull_request", association: "OWNER" },
+    ]) {
+      expect(runnersFor(run, withSecrets)).toEqual(new Set([githubHosted]));
+    }
+  });
+
+  it("routes only on facts GitHub sets, never on text a pull request controls", () => {
+    for (const job of routed) {
+      const eventPaths = new Set(job.runsOn.match(/github\.event\.[A-Za-z0-9_.]+/g));
+      expect([...eventPaths].toSorted()).toEqual([
+        "github.event.pull_request.author_association",
+        "github.event.pull_request.head.repo.full_name",
+      ]);
+      expect(job.runsOn).not.toMatch(/head_ref|inputs\.|matrix\.|env\./);
+    }
+  });
+});

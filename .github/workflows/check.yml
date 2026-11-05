@@ -1,13 +1,21 @@
-# Runners. Trusted runs use Blacksmith runners, which are faster. Every run in this repository is
-# trusted except a pull request from a fork: the release workflow's call on each push to main, and
-# pull requests from branches here, which only people with write access can push. A fork's pull
-# request runs on a free GitHub-hosted runner by default. That default is not a boundary: a fork's
-# pull request runs its own copy of this file, so it can name any runner.
-# Every outside contributor's runs wait for a maintainer, who checks workflow edits first.
-# Forks of this repository run on GitHub-hosted runners too. Approved outside code can still reach
-# a Blacksmith runner, and release publishes the tarball the check job builds, so no job here
-# restores a cache: setup-node's package manager cache is off, and nothing uses actions/cache or a
-# Blacksmith sticky disk. Publish runs on a GitHub-hosted runner, which npm provenance needs.
+# Runners. Each job's runs-on picks its runner from GitHub's facts about the run:
+# - A pull request from a fork, or from any author who isn't a maintainer, runs on a GitHub-hosted
+#   runner. So does a run outside this repository, since other repositories can call this file.
+# - A pull request from a branch of this repository by a maintainer (an owner or member of the
+#   organization) runs on the runner the CI_RUNNER_MAINTAINER repository variable names.
+# - A push to main, through the release workflow, and a merge queue run use the runner the
+#   CI_RUNNER_TRUSTED variable names.
+# An unset variable falls back to a Blacksmith runner. The scans and the `CI` job are short and
+# always run on GitHub-hosted runners. typescript/tests/unit/ci-runner-routing.test.ts checks these
+# routes for forks, outside authors, maintainers and pushes.
+# This routing is not a security boundary: a fork's pull request runs its own copy of this file, so
+# it can name any runner. Every outside contributor's runs wait for a maintainer, who checks
+# workflow edits first. A self-hosted runner must also refuse, on its own side, any job its route
+# doesn't allow. docs/RELEASING.md describes what such a runner must do.
+# Approved outside code can still reach a non-GitHub runner, and release publishes the tarball the
+# check job builds, so no job here restores a cache: setup-node's package manager cache is off, and
+# nothing uses actions/cache or a Blacksmith sticky disk. Publish runs on a GitHub-hosted runner,
+# which npm provenance needs.
 name: Check
 on:
   # Pushes to main run this through the release workflow, which publishes the tarball it tests.
@@ -29,10 +37,7 @@ jobs:
   # tools/ci-scan.sh holds the steps, and typescript/tests/unit/ci-scan.test.ts tests them.
   secret-scan:
     name: Secret scan
-    runs-on: >-
-      ${{ github.repository == 'Pomerado/pomerado'
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -65,10 +70,7 @@ jobs:
   # like GitHub's merge or squash of a pull request is that pull request's merge commit.
   content-scan:
     name: Public content scan
-    runs-on: >-
-      ${{ github.repository == 'Pomerado/pomerado'
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,8 +96,13 @@ jobs:
   check:
     runs-on: >-
       ${{ github.repository == 'Pomerado/pomerado'
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+      && (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'merge_group')
+      && (vars.CI_RUNNER_TRUSTED || 'blacksmith-4vcpu-ubuntu-2404')
+      || github.repository == 'Pomerado/pomerado' && github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && contains(fromJSON('["OWNER", "MEMBER"]'), github.event.pull_request.author_association)
+      && (vars.CI_RUNNER_MAINTAINER || 'blacksmith-4vcpu-ubuntu-2404')
+      || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -168,8 +175,13 @@ jobs:
     name: Browser tests (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: >-
       ${{ github.repository == 'Pomerado/pomerado'
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+      && (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'merge_group')
+      && (vars.CI_RUNNER_TRUSTED || 'blacksmith-4vcpu-ubuntu-2404')
+      || github.repository == 'Pomerado/pomerado' && github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && contains(fromJSON('["OWNER", "MEMBER"]'), github.event.pull_request.author_association)
+      && (vars.CI_RUNNER_MAINTAINER || 'blacksmith-4vcpu-ubuntu-2404')
+      || 'ubuntu-latest' }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -189,8 +201,17 @@ jobs:
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm build
-      - run: corepack pnpm exec playwright install --with-deps chromium
-      # One worker per vCPU. Both runners this job uses have 4 vCPUs.
+      # A runner without sudo must already hold Chromium's system libraries, as a self-hosted
+      # runner's image does, so only Chromium itself is installed there.
+      - name: Install Chromium
+        shell: bash
+        run: |
+          if sudo -n true 2>/dev/null; then
+            corepack pnpm exec playwright install --with-deps chromium
+          else
+            corepack pnpm exec playwright install chromium
+          fi
+      # One worker per vCPU. Every runner this job uses has 4 vCPUs.
       - run: corepack pnpm test:browser --shard=${{ matrix.shard }}/${{ strategy.job-total }} --workers=4
   # `CI` is one status for the whole run. It fails unless every job it needs succeeded, so a
   # skipped or cancelled job never passes for a green one. Add every new job to `needs`.
@@ -198,12 +219,21 @@ jobs:
     name: CI
     if: always()
     needs: [check, browser, secret-scan, content-scan]
-    runs-on: >-
-      ${{ github.repository == 'Pomerado/pomerado'
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # The facts the check and browser jobs chose their runners from.
+      - name: Show the runner route
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+        run: |
+          echo "Event $EVENT on $REF."
+          if [ "$EVENT" = pull_request ]; then
+            echo "Head in this repository: $SAME_REPOSITORY. Author association: $AUTHOR_ASSOCIATION."
+          fi
       - name: Require every job to succeed
         env:
           NEEDS: ${{ toJSON(needs) }}

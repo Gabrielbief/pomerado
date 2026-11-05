@@ -37,7 +37,7 @@ concurrency:
 jobs:
   version:
     if: github.event_name == 'push' && github.repository == 'Pomerado/pomerado'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:
       run:
@@ -353,10 +353,11 @@ jobs:
           gh release edit "$tag" --repo "$REPOSITORY" --latest
   # Posts to the maintainers' alerts channel when a canary or a promotion fails. The slack-alerts
   # environment deploys only from main and holds the incoming webhook and the on-call mention.
+  # It holds a secret, so it runs on a GitHub-hosted runner, a fresh machine for every job.
   alert:
     needs: [version, check, canary, promote]
     if: failure() && github.repository == 'Pomerado/pomerado'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: slack-alerts
     steps:

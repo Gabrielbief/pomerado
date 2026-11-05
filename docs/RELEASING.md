@@ -84,6 +84,28 @@ Known limits:
 - A dispatch evaluates many commits in one run, so it isn't serialized with the runs for each commit. If a review lands while a dispatch runs, the dispatch can post a verdict that is seconds old. The next event on that pull request, or another dispatch, corrects it.
 - The gate doesn't handle `merge_group` events, so a merge queue's commits get no `Approval`. Before `main` adopts a merge queue, the gate needs a `merge_group` path, or the ruleset needs to stop requiring `Approval` on queue commits. Every pull request in a queue has already passed the gate at its head commit.
 
+## CI runners
+
+The [Check workflow](../.github/workflows/check.yml) picks each job's runner from facts GitHub sets about the run, and `typescript/tests/unit/ci-runner-routing.test.ts` checks every route:
+
+| Run | `check` and browser jobs | Every other job |
+| --- | --- | --- |
+| A pull request from a fork | GitHub-hosted | GitHub-hosted |
+| A pull request from a branch here by an author whose association is not `OWNER` or `MEMBER`, such as a bot | GitHub-hosted | GitHub-hosted |
+| A pull request from a branch here by an organization owner or member | `vars.CI_RUNNER_MAINTAINER` | GitHub-hosted |
+| A push to `main`, through the Release workflow, or a merge queue run | `vars.CI_RUNNER_TRUSTED` | GitHub-hosted |
+| A run in another repository that calls `check.yml` | GitHub-hosted | GitHub-hosted |
+
+An unset variable falls back to a Blacksmith runner. Set a variable to a runner label to move those jobs, and delete it to move them back. Standard GitHub-hosted runners are free for public repositories, and their `ubuntu-latest` has 4 vCPUs, as the browser job's `--workers=4` expects. Jobs that hold a secret, such as the canary publish, the promotion and the failure alert, always run on GitHub-hosted runners, which give every job a fresh machine.
+
+This routing is not a security boundary. A fork's pull request runs its own copy of the workflow, so it can name any runner label. Every outside contributor's runs wait for a maintainer's approval, and the maintainer checks changes to `.github/`, `package.json` and the lockfile before approving. A self-hosted runner that either variable names must also enforce its route on its own side:
+
+- A job-started hook in the runner's image, which the workflow can't change, reads the event GitHub delivers and refuses the job before any step runs unless it is one the runner takes. A maintainer runner takes only a `pull_request` whose head repository is this repository and whose author is a maintainer. A trusted runner takes only a push to `refs/heads/main` and a `merge_group` run. The hook refuses anything it can't read.
+- The trusted runner and the maintainer runner use separate machines, so pull request code never runs where a later job builds the published tarball.
+- Each job gets a fresh, unprivileged environment: one job per runner, no Docker daemon, no privilege escalation, no cloud credentials or service account token, and no route to cloud metadata services or private networks.
+- The runner registers to this repository only, or to a runner group limited to it. A trusted runner's group also limits it to workflows on `main`.
+- Its image already holds Node, pnpm and Chromium with its system libraries, built from public sources only. Without `sudo`, the browser job installs Chromium without system libraries.
+
 ## Changes and versions
 
 Record user-facing changes in [CHANGELOG.md](../CHANGELOG.md) in the pull request that makes them. Bump `version` in `package.json` to start a new release line: a breaking change gets migration steps and, while the major version is 0, a new minor version.
