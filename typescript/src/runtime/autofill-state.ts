@@ -426,6 +426,13 @@ const namedControl = (
     return identity;
   });
 
+/**
+ * The `dismiss` a recorded step keeps for runs: none when the step cites the owner's answers that
+ * allowed it to accept a notice (`confirmedBy`), so a run never accepts it by itself.
+ */
+const recordedDismiss = (step: Pick<AutofillStep, "dismiss" | "confirmedBy">) =>
+  (step.confirmedBy ?? []).length > 0 ? undefined : step.dismiss;
+
 /** `armStep` once what named each control is screened (`identities`, per field). */
 const armScreened = (
   state: AutofillSignInState,
@@ -447,6 +454,7 @@ const armScreened = (
     const identity = identities[index];
     return identity === undefined ? field : { ...field, identity };
   };
+  const dismiss = recordedDismiss(step);
   state.steps.push({
     ...(step.popup === undefined ? {} : { popup: step.popup }),
     ...(step.rejectedMarkers === undefined ? {} : { rejectedMarkers: step.rejectedMarkers }),
@@ -460,7 +468,7 @@ const armScreened = (
     ...(step.submitKey === undefined ? {} : { submitKey: step.submitKey }),
     ...(step.methods === undefined ? {} : { methods: step.methods }),
     ...(step.option === undefined ? {} : { option: step.option }),
-    ...(step.dismiss === undefined ? {} : { dismiss: step.dismiss }),
+    ...(dismiss === undefined ? {} : { dismiss }),
     ...(step.choice === undefined ? {} : { choice: step.choice }),
     page: inspection.page,
   });
@@ -555,13 +563,16 @@ export const recordStep = (
 
 /**
  * The open sign-in's `blocked` screen when `request` names it again, by its popup, its fields'
- * selectors in order, its submit, submit key and methods, with the request's `dismiss`: the host
- * clicks its submit again and types nothing (`resubmitAutofillStep`). Undefined for any other
- * screen, which is a fill of its own.
+ * selectors in order, its submit, submit key and methods, with the request's `dismiss` and
+ * `confirmedBy`: the host clicks its submit again and types nothing (`resubmitAutofillStep`).
+ * Undefined for any other screen, which is a fill of its own.
  */
 export const blockedScreen = (
   state: AutofillSignInState | undefined,
-  request: Pick<AutofillStep, "popup" | "submit" | "submitKey" | "methods" | "dismiss"> & {
+  request: Pick<
+    AutofillStep,
+    "popup" | "submit" | "submitKey" | "methods" | "dismiss" | "confirmedBy"
+  > & {
     readonly fields: readonly { readonly selector: string }[];
   },
 ): AutofillStep | undefined => {
@@ -576,14 +587,19 @@ export const blockedScreen = (
     blocked.fields.some((field, index) => field.selector !== request.fields[index]?.selector)
   )
     return undefined;
-  const { dismiss: _dismiss, ...screen } = blocked;
-  return request.dismiss === undefined ? screen : { ...screen, dismiss: request.dismiss };
+  const { dismiss: _dismiss, confirmedBy: _confirmedBy, ...screen } = blocked;
+  return {
+    ...screen,
+    ...(request.dismiss === undefined ? {} : { dismiss: request.dismiss }),
+    ...(request.confirmedBy === undefined ? {} : { confirmedBy: request.confirmedBy }),
+  };
 };
 
 /**
  * Records the host's click again of the `blocked` screen (`resubmitAutofillStep`) once it returns:
  * the screen's recorded step, the open sign-in's last, takes the `dismiss` the host clicks there,
- * which a run's replay clicks too, and the report settles it as a fill's would (`recordStep`). A
+ * which a run's replay clicks too, unless the step cites the owner's answers that allowed it
+ * (`recordedDismiss`), and the report settles it as a fill's would (`recordStep`). A
  * refusal clicked nothing, so the screen stays blocked with what it holds. A field found empty
  * before the click clicked nothing either, and nothing of the screen was sent: its step leaves the
  * recipe, so the screen filled again records it once, with its dismiss, and what the blocked fill
@@ -604,8 +620,9 @@ export const recordResubmit = (
     return typed;
   }
   const last = state.steps.at(-1);
-  if (last !== undefined && step.dismiss !== undefined)
-    state.steps[state.steps.length - 1] = { ...last, dismiss: step.dismiss };
+  const dismiss = recordedDismiss(step);
+  if (last !== undefined && dismiss !== undefined)
+    state.steps[state.steps.length - 1] = { ...last, dismiss };
   recordStep(state, step, stepReport);
   return [];
 };
