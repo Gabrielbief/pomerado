@@ -13,7 +13,11 @@ import type {
   IdentifierKind,
   SecretSlot,
 } from "../destinations/autofill-step.js";
-import { type AutofillRecipeStep, isSecondFactor } from "../destinations/autofill-recipe.js";
+import {
+  type AutofillRecipeStep,
+  isSecondFactor,
+  type RefillSlot,
+} from "../destinations/autofill-recipe.js";
 import type { ControlIdentity } from "../destinations/autofill-page-code.js";
 import type { TypedBox } from "../destinations/autofill-fill.js";
 import { report, type SignInReportContext } from "./sign-in-telemetry.js";
@@ -198,7 +202,10 @@ interface AutofillRecordedStep {
   readonly methods?: AutofillRecipeStep["methods"];
   /** The picked method's `option`, with `submit`, when it was chosen from a native select. */
   readonly option?: string;
-  /** The password an earlier screen took that this one asked for again beside a second factor. */
+  /**
+   * The password an earlier screen took that this one asked for again beside a second factor, or
+   * the code, on a second code screen.
+   */
   readonly refills?: AutofillRecipeStep["refills"];
   /** The covering notice's own control the host clicks on this screen (`AutofillStep.dismiss`). */
   readonly dismiss?: string;
@@ -516,11 +523,88 @@ export const reasksPassword = (
   );
 };
 
-/** Marks the screen just armed as asking for the password again (`reasksPassword`). */
-export const noteRefill = (state: AutofillSignInState) => {
+/** What named a control when the host found it: its `id` and `name` attributes. */
+type ControlNames = Pick<ControlIdentity, "id" | "name">;
+/** A screen's fields, each with what named its control when the host found it, if known. */
+export interface NamedFields {
+  readonly fields: readonly {
+    readonly slot: string;
+    readonly selector: string;
+    readonly identity?: ControlNames | undefined;
+  }[];
+}
+
+/** A step's fields with what named each control on the screen the host inspected, in order. */
+export const namedFields = (
+  step: Pick<AutofillStep, "fields">,
+  screen: readonly ControlNames[],
+): NamedFields => ({
+  fields: step.fields.map((field, index) => ({ ...field, identity: screen[index] })),
+});
+
+/** An `id` or `name` a control showed, never an empty one. */
+const shown = (value: string | null | undefined) =>
+  value !== undefined && value !== null && value !== "";
+
+/**
+ * Whether two code boxes are the same field: the same selector, `id` or `name`. A box named under
+ * another selector is still the same box, and so is one whose `id` or `name` the sign-in kept
+ * none of, as when its naming held a secret.
+ */
+const sameBox = (here: NamedFields["fields"][number], before: NamedFields["fields"][number]) => {
+  const a = here.identity;
+  const b = before.identity;
+  return (
+    here.selector === before.selector ||
+    (shown(a?.id) && a?.id === b?.id) ||
+    (shown(a?.name) && a?.name === b?.name)
+  );
+};
+
+/**
+ * Whether `step` takes a code in boxes the earlier code screen (`earlier`) did not: none of its
+ * code boxes is one of the earlier screen's (`sameBox`), so the same code screen shown again never
+ * reads as a second one. Two codes typed into the same box are not told apart.
+ */
+export const takesAnotherCode = (step: NamedFields, earlier: NamedFields | undefined) => {
+  const codes = (fields: NamedFields | undefined) =>
+    (fields?.fields ?? []).filter((field) => field.slot === "code");
+  const before = codes(earlier);
+  const here = codes(step);
+  return (
+    before.length > 0 &&
+    here.length > 0 &&
+    here.every((box) => !before.some((previous) => sameBox(box, previous)))
+  );
+};
+
+/**
+ * Whether a screen of the open sign-in (`open`) asks for a second, different code after the code
+ * an earlier screen took went out (`refills`, the secrets filled before, is the code alone): its
+ * code boxes, as the host found them on the screen (`screen`), are not the last code screen's
+ * (`takesAnotherCode`), as a sign-in that sends one code by text and then another by email does.
+ * The recipe records the refill there, and only there a run's replay makes it, once.
+ */
+export const reasksCode = (
+  open: AutofillSignInState | undefined,
+  step: AutofillStep,
+  refills: readonly AutofillSlot[],
+  screen: readonly ControlNames[],
+) =>
+  refills.includes("code") &&
+  refills.every((slot) => slot === "code") &&
+  takesAnotherCode(
+    namedFields(step, screen),
+    open?.steps.findLast((taken) => taken.fields.some((field) => field.slot === "code")),
+  );
+
+/**
+ * Marks the screen just armed as asking again for the password (`reasksPassword`), or for a
+ * second code (`reasksCode`).
+ */
+export const noteRefill = (state: AutofillSignInState, slot: RefillSlot = "password") => {
   const armed = state.steps.at(-1);
-  if (armed !== undefined)
-    state.steps[state.steps.length - 1] = { ...armed, refills: ["password"] };
+  if (armed !== undefined) state.steps[state.steps.length - 1] = { ...armed, refills: [slot] };
 };
 
 /**
