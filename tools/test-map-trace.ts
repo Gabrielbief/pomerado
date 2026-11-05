@@ -22,6 +22,7 @@ const root = process.env["TEST_MAP_ROOT"];
 if (out !== undefined && out !== "" && root !== undefined && root !== "") {
   const prefix = root.endsWith("/") ? root : `${root}/`;
   const writeSync = fs.writeSync.bind(fs);
+  const readlink = fs.readlinkSync.bind(fs);
   const handle = fs.openSync(
     join(out, `${process.pid}-${Math.random().toString(36).slice(2)}.txt`),
     "a",
@@ -39,7 +40,16 @@ if (out !== undefined && out !== "" && root !== undefined && root !== "") {
     } else if (Buffer.isBuffer(target)) path = target.toString();
     else return;
     // resolve() also normalizes an absolute path and drops a trailing slash.
-    const absolute = resolve(path);
+    let absolute = resolve(path);
+    // A path below an open folder's descriptor, as scoped reads open files on Linux.
+    const below = /^\/proc\/self\/fd\/(\d+)(\/.*)?$/u.exec(absolute);
+    if (below !== null) {
+      try {
+        absolute = resolve(readlink(`/proc/self/fd/${below[1] ?? ""}`) + (below[2] ?? ""));
+      } catch {
+        return;
+      }
+    }
     if (!absolute.startsWith(prefix)) return;
     const relative = absolute.slice(prefix.length) + (kind === "dir" ? "/" : "");
     if (

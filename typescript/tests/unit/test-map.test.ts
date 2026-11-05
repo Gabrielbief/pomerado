@@ -271,6 +271,7 @@ describe("trace preload", () => {
     write("data/computed.txt", "text\n");
     write("data/child.txt", "text\n");
     write("data/listed/item.txt", "text\n");
+    write("data/held/inside.txt", "text\n");
     write(
       "child.mjs",
       'import { readFileSync } from "node:fs";\nreadFileSync(new URL("./data/child.txt", import.meta.url));\n',
@@ -278,12 +279,14 @@ describe("trace preload", () => {
     write(
       "main.mjs",
       [
-        'import { readFileSync, readdirSync } from "node:fs";',
+        'import { closeSync, openSync, readFileSync, readdirSync } from "node:fs";',
         'import { spawnSync } from "node:child_process";',
         'import { value } from "./lib/imported.mjs";',
         'const name = ["comp", "uted"].join("");',
         "readFileSync(new URL(`./data/${name}.txt`, import.meta.url));",
         'readdirSync(new URL("./data/listed/", import.meta.url));',
+        // Scoped reads on Linux open a file below a held folder descriptor.
+        'if (process.platform === "linux") { const fd = openSync(new URL("./data/held/", import.meta.url), "r"); readFileSync(`/proc/self/fd/${fd}/inside.txt`); closeSync(fd); }',
         'const child = spawnSync(process.execPath, [new URL("./child.mjs", import.meta.url).pathname], { env: { PATH: process.env.PATH } });',
         "if (child.status !== 0 || value !== 1) process.exit(1);",
       ].join("\n"),
@@ -309,6 +312,7 @@ describe("trace preload", () => {
       "data/listed/",
       "child.mjs",
       "data/child.txt",
+      ...(process.platform === "linux" ? ["data/held/inside.txt"] : []),
     ])
       expect(recorded).toContain(path);
   });
