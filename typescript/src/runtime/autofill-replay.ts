@@ -15,6 +15,7 @@ import {
   type AutofillReplayInput,
   emptyRetryFields,
   askOne,
+  isTwoFactorOption,
   valuesNeeded,
 } from "./autofill-replay-steps.js";
 import { alreadySignedIn, makeReplay, type Replay, workspaceOf } from "./autofill-replay-session.js";
@@ -104,7 +105,9 @@ const shownScreen = (step: AutofillStep, inspection: AutofillInspection): ShownS
 
 /**
  * The recorded screen as it runs now: a method choice clicks the method this run picks, or
- * chooses its option in a native select.
+ * chooses its option in a native select. A way in that the recorded sign-in picked there, a
+ * password or an identifier, is the run's route: it clicks that, asking nothing, and otherwise
+ * picks only among the choice's two-factor methods.
  */
 const screenFor = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   replay: Replay<E, V, L>,
@@ -140,8 +143,14 @@ const screenFor = <E extends YieldableError, V extends string, L extends Autofil
     if (typeof shown === "string" || "outcome" in shown.found) return shown;
     // Picking a method may send a code: a value-free replay stops before it.
     if (replay.valueFree) return valuesNeeded;
-    const picked = yield* replay.pickMethod(recorded.methods);
-    replay.progress.chosen = picked.method;
+    const picked =
+      recorded.methods.find(
+        (method) =>
+          !isTwoFactorOption(method) &&
+          method.option === undefined &&
+          method.selector === recorded.submit,
+      ) ?? (yield* replay.pickMethod(recorded.methods.filter(isTwoFactorOption)));
+    if (isTwoFactorOption(picked)) replay.progress.chosen = picked.method;
     return {
       fields: [],
       submit: picked.selector,

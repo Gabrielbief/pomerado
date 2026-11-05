@@ -36,6 +36,7 @@ import {
   defaultTiming,
   pickMethod,
   shownAgain,
+  type SignInMethodOption,
 } from "./autofill-replay-steps.js";
 import { runReplayStep, correctReplayExtras, settleCarried } from "./autofill-replay-fill.js";
 
@@ -478,8 +479,7 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
     shownAgain: (slot: AutofillSecret) =>
       shownAgain(session.hooks, session.progress.ran, session.sent.maySent, slot),
     refuseShownAnswer: refuseShownAnswer(session),
-    pickMethod: (methods: NonNullable<AutofillRecipeStep["methods"]>) =>
-      pickMethod(input, methods),
+    pickMethod: (methods: readonly SignInMethodOption[]) => pickMethod(input, methods),
   };
 };
 export type Replay<
