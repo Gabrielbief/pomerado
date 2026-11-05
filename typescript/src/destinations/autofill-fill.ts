@@ -234,9 +234,9 @@ interface FillProgress {
   /** Whether any value may have reached the page. */
   typed: boolean;
   /**
-   * A trusted key may have reached the page though the field refused the value: the step's one
-   * code field's page moved the focus on once a key went in (`codeAtOnce`). Evidence then names
-   * only what it would once anything was typed (`evidenceOrigins`).
+   * The host began putting a value in, so some of it may have reached the page even when the
+   * insertion was refused or its answer lost. Evidence then names only what it would once
+   * anything was typed (`evidenceOrigins`).
    */
   keyed?: true;
   /**
@@ -388,9 +388,9 @@ const guardOrigins = (input: CallInput) =>
   namedAfterTyping(input.inspection) ?? judgedOrigins(input.inspection);
 
 /**
- * The origins a refusal's evidence may name: any until something was typed into the page, or a key
- * may have gone in (`keyed`), then only the guard's (`guardOrigins`), since page code may have put
- * a typed value in another.
+ * The origins a refusal's evidence may name: any until the host began putting a value into the
+ * page (`keyed`), then only the guard's (`guardOrigins`), since page code may have put a typed
+ * value in another.
  */
 const evidenceOrigins = (input: CallInput, progress: FillProgress) =>
   progress.typed || progress.keyed === true || input.inspection.judgedBeforeTyping !== undefined
@@ -988,6 +988,7 @@ const afterFieldCall = (
     if (answer.focused) {
       const value = input.values[index] ?? "";
       const slot = input.step.fields[index]?.slot;
+      progress.keyed = true;
       const typing = yield* Effect.either(
         input.keyboard.insertText(
           {
@@ -1049,7 +1050,6 @@ const afterFieldCall = (
       }
       insertion = typing.right;
       if (!atOnce && focusLeftCodeField(input, index, insertion)) {
-        progress.keyed = true;
         const inserted = yield* codeAtOnce(input, progress, index);
         if (inserted !== "untyped") return inserted;
       }

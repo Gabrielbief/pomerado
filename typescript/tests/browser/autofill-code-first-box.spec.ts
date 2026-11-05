@@ -269,3 +269,55 @@ test("a code field whose page moves the focus on after its first key and points 
   expect(JSON.stringify(context)).not.toContain(`code-${code[0]}`);
   expect(received).toEqual([]);
 });
+
+// A typing call whose answer is lost on a code step may still have put the code in: the screen it
+// closed in place then names no origin but those judged before.
+test("a code step whose typing answer is lost and whose screen closes in place into a frame named for the code keeps the code out of the refusal", async ({
+  page,
+}) => {
+  const frameOrigin = `https://c${code}.other.test`;
+  await page.route(`${frameOrigin}/**`, (route) =>
+    route.fulfill({ contentType: "text/html", body: '<button id="verify" hidden>Verify</button>' }),
+  );
+  await serve(
+    page,
+    `<label>Code<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code"></label>
+<button id="verify" type="button">Verify</button>
+<script>
+const box = document.getElementById("code");
+box.addEventListener("input", () => {
+  if (box.value.length < 6) return;
+  document.getElementById("verify").remove();
+  const frame = document.createElement("iframe");
+  frame.src = "https://c" + box.value + ".other.test/";
+  document.body.append(frame);
+});
+</script>`,
+  );
+  const host = await hostPage(page);
+  const inspection = await Effect.runPromise(
+    inspectAutofillStep({ step: codeStep, page: host, siteOrigin: site, authenticationOrigins: [] }),
+  );
+  if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
+  const { keyboard } = await hostKeyboard(page);
+  const report = await Effect.runPromise(
+    fillAutofillStep({
+      step: codeStep,
+      values: [code],
+      inspection,
+      page: host,
+      // The code goes in, then the call's answer is lost.
+      keyboard: {
+        insertText: (target, text, options) =>
+          keyboard.insertText(target, text, options).pipe(
+            Effect.zipRight(Effect.promise(() => page.frameLocator("iframe").locator("#verify").waitFor({ state: "attached" }))),
+            Effect.zipRight(Effect.fail(new Error("Answer lost"))),
+          ),
+      },
+      settleMs: 2_000,
+    }),
+  );
+  const context: unknown = Reflect.get({ ...Reflect.get(report, "failureDetail") }, "context");
+  expect(context).toMatchObject({ check: "not_found", matches: "other 0/1" });
+  expect(JSON.stringify(context)).not.toContain(code);
+});
