@@ -961,7 +961,7 @@ describe("the publication policy", () => {
   // though the question's prompt can hold that text.
   it("counts a shortened label with the full text in the prompt only for a choice too long for one", () => {
     const rule =
-      "An option label holds at most 256 characters. Only when a site's choice is longer than that, a label shortened to fit, with the choice's full text in the question's prompt, counts as showing the site's full text. A choice that fits keeps its full text in its label.";
+      "An option label holds at most 256 characters. Only when a site's choice is longer than that, a label shortened to fit, with the choice's full text in the question's prompt, counts as showing the site's full text. For a `site_field`, the host adds that full text to the prompt itself. A choice that fits keeps its full text in its label.";
     expect(guardianPublicationPolicy).toContain(`which no input could name beforehand. ${rule}\n`);
   });
 

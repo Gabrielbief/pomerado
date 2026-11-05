@@ -598,10 +598,10 @@ export const publicationFindingFeedback =
 
 /**
  * When a shortened option label shows the site's full text: only for a choice longer than a
- * label holds, with its full text in the question's prompt. The publication review's
- * declared-questions rule carries it.
+ * label holds, with its full text in the question's prompt, which the host adds itself for a
+ * site field. The publication review's declared-questions rule carries it.
  */
-export const longOptionLabelPolicy = `An option label holds at most ${longestLabel} characters. Only when a site's choice is longer than that, a label shortened to fit, with the choice's full text in the question's prompt, counts as showing the site's full text. A choice that fits keeps its full text in its label.`;
+export const longOptionLabelPolicy = `An option label holds at most ${longestLabel} characters. Only when a site's choice is longer than that, a label shortened to fit, with the choice's full text in the question's prompt, counts as showing the site's full text. For a \`site_field\`, the host adds that full text to the prompt itself. A choice that fits keeps its full text in its label.`;
 
 /**
  * Guardian's policy for a publication review: what ships, who wrote each file, and the privacy,

@@ -14,7 +14,9 @@ export const QuestionId = Schema.String.pipe(Schema.pattern(questionIdPattern));
 const OptionId = Schema.String.pipe(Schema.pattern(/^[a-z0-9_]{1,64}$/));
 
 const Label = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256));
-const Prompt = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(2000));
+/** The longest prompt any question takes, in UTF-16 code units. */
+export const longestPrompt = 2000;
+const Prompt = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(longestPrompt));
 const maximumOptions = 50;
 const maximumQuestions = 8;
 /** The longest free-text or secret answer any question accepts. */
