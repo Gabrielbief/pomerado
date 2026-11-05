@@ -1120,6 +1120,15 @@ describe("the publication policy", () => {
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
   });
 
+  // A read-back that compares the page with a part the script cut from a picked option, such as
+  // its text before the first comma, refuses a correct pick whenever the page shows more of the
+  // option. It joins the list of checks that would reject a correct write.
+  it("finds a read-back against a part the script cut from a picked option", () => {
+    expect(guardianPublicationPolicy).toContain(
+      "and any other difference; or a read-back that compares what the page shows for a picked option with a part the script cut from that option, instead of the whole option or the site's own selected state. It is a confirmation finding too when a read-back before the final commit",
+    );
+  });
+
   // A caller's number limit beyond a stepped scale's end, or between its steps, can still be
   // applied in a read: the scale's end or the nearest step inside the bound answers it. Refusing
   // it as invalid input is a wrong failure.

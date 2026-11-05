@@ -826,6 +826,10 @@ it("has the minter read back a write, accept recent-search saves and look before
   expect(text("writes")).toContain(
     "- Before committing, read back from the page what you are about to submit and check each value as the core skill's Confirm step says, against the option the tool picked when it picked one, or the site's version of a typed value it rewrote (below), in the session and on every branch of the composed script. When a structured value (\"Check the read-back\") does not match, pick or type it once more, and throw `InputNotApplied` if it still differs. Prefer running this check before the step's commit mark, so a mismatch stops the step before it sends anything. A free-text value the page rewrote is kept, as the next bullet says. Never read back a field filled with a secret handle.",
   );
+  // A read-back against a piece the script cut from a picked option refuses a correct pick.
+  expect(text("writes")).toContain(
+    "Never read back a field filled with a secret handle. Prefer confirming a pick from the site's own selected state, or from a shorter display read as the whole-word start of the whole option, over comparing it with a piece the script cut from the option. - Read each typed value back",
+  );
   expect(text("core")).toContain(
     "Telemetry, analytics and bot-sensor POSTs are normal and need no change. So is an anonymous recent-search, prefill or search-state save the site fires when you submit a search.",
   );
@@ -1301,7 +1305,7 @@ it("renders the pinned standalone authoring", async () => {
     ["892ed73535d99bbd6a0b54f9351d8f0995267956de380f3cff59bb3f6c0d7213", "testing"],
     ["2b559ad88157f28be2a054787f4c736cf192bb825760bdf3050c01a59d060ba8", "pagination"],
     ["2dd7cabe26d127855e4a8d2d6975b23e8b0999e6d1e227a1b6157dcb32e5c781", "forms"],
-    ["a5efd3a978cfd00f32b71a57884c8a73579978868cecb40acca57cc33a3897b3", "writes"],
+    ["b8eb296cdad346e7f6364ff62da4cb05eddbee6423e43e49395f2b35f365e0dd", "writes"],
     ["95b21e2164990308565c275902fd14fa2777ea8fc7ddd9e9fbe1cb22773d02be", "cart"],
     ["bc7bb91f330493fe7c4fda697b974a175d83702e6b20d6b4a632d9bcb250a14b", "caller-input"],
     ["8a3ae8ebe6c3d4b946265c44f9eeb1e092f356666cac629f050faf24ef49eb6d", "publication"],
