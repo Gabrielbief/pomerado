@@ -673,7 +673,10 @@ site's own data request<!-- pomerado:section core.data-request-reference -->, to
 each record's detail page, keep each to a few calls (open, wait, one read), and consider whether
 the request is better served as two tools, a search and a details read by identifier; say so in
 `coverage`. Prefer opening those detail pages only for the rows the call returns, after
-`readList`, not inside the list reader (pagination skill). When a call needs many independent
+`readList`, not inside the list reader (pagination skill). When a read opens item pages, pop-ups
+or new tabs to collect details, prefer the list data the page already loads, and close each page
+before opening the next. A browser whose memory fills stops answering, and the run fails. When a
+call needs many independent
 lookups or detail reads, such as one for each returned row, prefer running them in parallel
 batches over one after another, such as the site's own data request for each row sent together
 in one `evaluate` with the runtime's `batchFetch` (paste `batchFetchCode`), or with `batchRead`
