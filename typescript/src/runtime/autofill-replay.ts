@@ -30,6 +30,7 @@ import {
 } from "./autofill-unrecorded-code.js";
 import {
   cantTell,
+  cantTellInPlace,
   offScreens,
   landingSettleMs,
   stillOff,
@@ -363,8 +364,9 @@ const runScreens = <E extends YieldableError, V extends string, L extends Autofi
  * Waits, bounded, for the marker to show on the current page. Once the page left the recorded
  * login screens and stayed put a moment, a read's sign-in on a page that can't tell stops waiting
  * and returns that page's check
- * (`cantTellHere`) for the last check to decide from. A page that reads signed out, such as the
- * marker's own path, waits out a marker drawn late.
+ * (`cantTellHere`) for the last check to decide from, as it does at once on the shared entry
+ * address a screen's wait already found settled there (`landedInPlace`). A page that reads signed
+ * out, such as the marker's own path, waits out a marker drawn late.
  * A caller that hands over at a code screen the recipe never recorded stops once the page is one
  * (`endsAtCodeScreen`), which the probe after the wait answers.
  */
@@ -382,6 +384,11 @@ const awaitIndicator = <E extends YieldableError, V extends string, L extends Au
       const check = yield* replay.checkHere;
       if (check.signedIn) return { shown: true } as const;
       if (yield* endsAtCodeScreen(input, replay, check.url, look)) return { shown: false } as const;
+      if (
+        replay.progress.landedInPlace &&
+        cantTellInPlace(check, input.recipe, replay.matchesRecorded, input.entryUrl)
+      )
+        return { shown: false, cantTellHere: check } as const;
       off = stillOff(off, offScreens(replay.onScreens, check.url), now);
       if (off !== undefined && now - off.since >= landingSettleMs) {
         if (
