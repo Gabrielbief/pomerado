@@ -599,7 +599,7 @@ export const publicationFindingFeedback =
 /**
  * When a shortened option label shows the site's full text: only for a choice longer than a
  * label holds, with its full text in the question's prompt. The publication review's
- * declared-questions rule and the question review carry it.
+ * declared-questions rule carries it.
  */
 export const longOptionLabelPolicy = `An option label holds at most ${longestLabel} characters. Only when a site's choice is longer than that, a label shortened to fit, with the choice's full text in the question's prompt, counts as showing the site's full text. A choice that fits keeps its full text in its label.`;
 

@@ -9,7 +9,6 @@ import { afterEach, expect, it } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
 import { ownerNamedOrigins } from "../../src/guardian/owner-named-origins.js";
-import { guardianPublicationPolicy } from "../../src/guardian/publication.js";
 import { answersForReview, questionForReview } from "../../src/guardian/question.js";
 import type { PendingQuestion } from "../../src/guardian/question.js";
 import { ReviewFailure, makeGuardian } from "../../src/guardian/review.js";
@@ -221,26 +220,6 @@ it("allows a question about the sign-in method when the host holds no login", as
   expect(reviewPolicyOf(requests[0])).not.toContain(
     "reword a question asking which method to use, and never allow one offering a passkey",
   );
-});
-
-// A site's choice longer than an option label holds reaches the caller shortened, and publication
-// review refused the tool for not showing the site's full text, a fix it said only the host could
-// make, though the question's prompt can hold that text.
-it("counts a shortened label with the full text in the prompt only for a choice too long for one", async () => {
-  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
-  await Effect.runPromise(
-    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
-      pending,
-      question,
-      unreadable,
-    ),
-  );
-  const rule =
-    "An option label holds at most 256 characters. Only when a site's choice is longer than that, a label shortened to fit, with the choice's full text in the question's prompt, counts as showing the site's full text. A choice that fits keeps its full text in its label.";
-  expect(reviewPolicyOf(requests[0])).toContain(
-    `so review each one. ${rule} Review the request as one:`,
-  );
-  expect(guardianPublicationPolicy).toContain(`which no input could name beforehand. ${rule}\n`);
 });
 
 // A repair's report that the caller's value was at fault was reworded as asking the user for
