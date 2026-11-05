@@ -8,7 +8,8 @@
  * `--test-list` to run each shard's tests.
  *
  * - `plan` reads `playwright test --list --reporter=json` and the durations, picks the shard count
- *   that keeps each shard's share near the target, and writes `shard-<k>.txt` (the test list) and
+ *   that keeps each shard's share near the target, splits the tests so each shard's simulated run
+ *   ends about when the others do, and writes `shard-<k>.txt` (the test list) and
  *   `shard-<k>.json` (the tests the shard must report) for each shard. It prints `shards=[1,…,N]`
  *   for the workflow's matrix. A test without a recorded duration counts as the median of its
  *   file's recorded tests, or of all of them. Without any durations, every test counts as
@@ -25,7 +26,7 @@
  *
  * Usage:
  *   node tools/browser-shards.ts plan --tests <list.json> --durations <dir> --out <dir>
- *     [--target-seconds 100] [--workers 4] [--max-shards 12] [--default-seconds 3]
+ *     [--target-seconds 80] [--workers 4] [--max-shards 16] [--default-seconds 3]
  *   node tools/browser-shards.ts record --results <report.json> --expected <shard-k.json>
  *     --out <durations.json> [--budget-seconds 100]
  */
@@ -135,12 +136,25 @@ export interface PlanOptions {
   readonly defaultSeconds: number;
 }
 
+/** One test-list line, a test or a whole file, with the tests it selects. */
+export interface Unit {
+  readonly line: string;
+  /** Keys of the tests the line selects. */
+  readonly tests: string[];
+  /** Each test's place in Playwright's run order, and its estimated seconds. */
+  readonly runs: { readonly order: number; readonly seconds: number }[];
+  seconds: number;
+}
+
 export interface Shard {
   /** Test-list lines, one per test or per whole file. */
   readonly lines: string[];
   /** Keys of every test the lines select. */
   readonly tests: string[];
-  seconds: number;
+  /** The shard's tests in run order, to simulate how its workers take them. */
+  runs: { readonly order: number; readonly seconds: number }[];
+  /** Estimated seconds until the shard's last test ends. */
+  makespan: number;
 }
 
 export interface Plan {
@@ -150,6 +164,58 @@ export interface Plan {
   readonly total: number;
 }
 
+/** Groups the tests into test-list units, each with its estimated seconds. */
+export const planUnits = (
+  tests: readonly TestId[],
+  durations: ReadonlyMap<string, number>,
+  serialFiles: ReadonlySet<string>,
+  defaultSeconds: number,
+): { units: Unit[]; known: number } => {
+  const recorded = tests.flatMap((test) => {
+    const seconds = durations.get(testKey(test));
+    return seconds === undefined ? [] : [{ test, seconds }];
+  });
+  const overall = median(recorded.map(({ seconds }) => seconds)) ?? defaultSeconds;
+  const fileMedians = new Map(
+    [...Map.groupBy(recorded, ({ test }) => test.file)].map(([file, rows]) => [
+      file,
+      median(rows.map(({ seconds }) => seconds)) ?? overall,
+    ]),
+  );
+  const whole = wholeFiles(tests, serialFiles);
+  const units = new Map<string, Unit>();
+  tests.forEach((test, order) => {
+    const line = whole.has(test.file) ? test.file : testKey(test);
+    const seconds = durations.get(testKey(test)) ?? fileMedians.get(test.file) ?? overall;
+    const unit = units.get(line) ?? { line, tests: [], runs: [], seconds: 0 };
+    unit.tests.push(testKey(test));
+    unit.runs.push({ order, seconds });
+    unit.seconds += seconds;
+    units.set(line, unit);
+  });
+  return { units: [...units.values()], known: recorded.length };
+};
+
+/**
+ * When the last of `runs` ends, as Playwright runs them: in run order, each to the first worker
+ * that is free.
+ */
+const makespan = (runs: readonly { readonly seconds: number }[], workers: number) => {
+  const free = Array.from({ length: workers }, () => 0);
+  for (const run of runs) {
+    let first = 0;
+    for (let worker = 1; worker < workers; worker += 1) if ((free[worker] ?? 0) < (free[first] ?? 0)) first = worker;
+    free[first] = (free[first] ?? 0) + run.seconds;
+  }
+  return Math.max(...free);
+};
+
+/**
+ * Splits the tests into shards. Playwright runs a shard's tests in file order, each on the next
+ * free worker, so a long test late in that order ends well after the rest. Each unit, longest
+ * first, goes to the shard where the simulated end of its last test is earliest. Ties go by
+ * shard number, so every run with the same inputs makes the same plan.
+ */
 export const plan = (
   tests: readonly TestId[],
   durations: ReadonlyMap<string, number>,
@@ -157,50 +223,32 @@ export const plan = (
   options: PlanOptions,
 ): Plan => {
   if (tests.length === 0) throw new Error("There are no browser tests to plan.");
-  const recorded = tests.flatMap((test) => {
-    const seconds = durations.get(testKey(test));
-    return seconds === undefined ? [] : [{ test, seconds }];
-  });
-  const overall = median(recorded.map(({ seconds }) => seconds)) ?? options.defaultSeconds;
-  const fileMedians = new Map(
-    [...Map.groupBy(recorded, ({ test }) => test.file)].map(([file, rows]) => [
-      file,
-      median(rows.map(({ seconds }) => seconds)) ?? overall,
-    ]),
-  );
-  const estimate = (test: TestId) =>
-    durations.get(testKey(test)) ?? fileMedians.get(test.file) ?? overall;
-
-  // A unit is one test-list line: a test, or a whole file.
-  const whole = wholeFiles(tests, serialFiles);
-  const units = new Map<string, { line: string; tests: string[]; seconds: number }>();
-  for (const test of tests) {
-    const line = whole.has(test.file) ? test.file : testKey(test);
-    const unit = units.get(line) ?? { line, tests: [], seconds: 0 };
-    unit.tests.push(testKey(test));
-    unit.seconds += estimate(test);
-    units.set(line, unit);
-  }
-  const total = [...units.values()].reduce((sum, unit) => sum + unit.seconds, 0);
+  const { units, known } = planUnits(tests, durations, serialFiles, options.defaultSeconds);
+  const total = units.reduce((sum, unit) => sum + unit.seconds, 0);
   const count = Math.max(
     1,
-    Math.min(options.maxShards, units.size, Math.ceil(total / (options.workers * options.targetSeconds))),
+    Math.min(options.maxShards, units.length, Math.ceil(total / (options.workers * options.targetSeconds))),
   );
-  const shards: Shard[] = Array.from({ length: count }, () => ({ lines: [], tests: [], seconds: 0 }));
-  // Longest first, each to the shard with the least time so far. Ties go by line, then shard
-  // number, so every run with the same inputs makes the same plan.
-  const ordered = [...units.values()].sort((a, b) => b.seconds - a.seconds || (a.line < b.line ? -1 : 1));
+  const shards: Shard[] = Array.from({ length: count }, () => ({ lines: [], tests: [], runs: [], makespan: 0 }));
+  const ordered = [...units].sort((a, b) => b.seconds - a.seconds || (a.line < b.line ? -1 : 1));
   for (const unit of ordered) {
-    const shard = shards.reduce((least, candidate) => (candidate.seconds < least.seconds ? candidate : least));
-    shard.lines.push(unit.line);
-    shard.tests.push(...unit.tests);
-    shard.seconds += unit.seconds;
+    let best: { shard: Shard; runs: Shard["runs"]; makespan: number } | undefined;
+    for (const shard of shards) {
+      const runs = [...shard.runs, ...unit.runs].sort((a, b) => a.order - b.order);
+      const end = makespan(runs, options.workers);
+      if (best === undefined || end < best.makespan) best = { shard, runs, makespan: end };
+    }
+    if (best === undefined) continue;
+    best.shard.lines.push(unit.line);
+    best.shard.tests.push(...unit.tests);
+    best.shard.runs = best.runs;
+    best.shard.makespan = best.makespan;
   }
   for (const shard of shards) {
     shard.lines.sort();
     shard.tests.sort();
   }
-  return { shards, known: recorded.length, total: tests.length };
+  return { shards, known, total: tests.length };
 };
 
 /** Spec files that put a describe block in serial mode. */
@@ -251,9 +299,9 @@ const runPlan = (args: string[]) => {
   const tests = reportTests(list);
   const durations = readDurations(values.durations);
   const options: PlanOptions = {
-    targetSeconds: number(values["target-seconds"], 100, "target-seconds"),
+    targetSeconds: number(values["target-seconds"], 80, "target-seconds"),
     workers: number(values.workers, 4, "workers"),
-    maxShards: number(values["max-shards"], 12, "max-shards"),
+    maxShards: number(values["max-shards"], 16, "max-shards"),
     defaultSeconds: number(values["default-seconds"], 3, "default-seconds"),
   };
   const serialFiles = findSerialFiles(values["test-dir"], new Set(tests.map((test) => test.file)));
@@ -272,7 +320,7 @@ const runPlan = (args: string[]) => {
       ...result.shards.map(
         (shard, index) =>
           `- shard ${index + 1}: ${shard.tests.length} tests, ` +
-          `about ${Math.round(shard.seconds / options.workers)} s with ${options.workers} workers`,
+          `about ${Math.round(shard.makespan)} s with ${options.workers} workers`,
       ),
     ].join("\n"),
   );

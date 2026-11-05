@@ -123,9 +123,9 @@ describe("browser shards", () => {
       seconds: 1,
     }));
     const specs = [...long, ...short];
-    const { shards } = planShards(specs, recorded(specs), ["--target-seconds", "25", "--workers", "2"]);
+    const { shards } = planShards(specs, recorded(specs), ["--target-seconds", "50", "--workers", "1"]);
 
-    // 400 test-seconds at 50 per shard (25 s on each of 2 workers) make 8 shards.
+    // 400 test-seconds at 50 per shard make 8 shards.
     expect(shards).toHaveLength(8);
     const all = shards.flatMap((shard) => shard.tests).sort();
     expect(all).toEqual(specs.map(key).sort());
@@ -136,6 +136,20 @@ describe("browser shards", () => {
     }
     // A shard's lines are its tests, one per line.
     expect(shards[0]?.lines.sort()).toEqual(shards[0]?.tests);
+  });
+
+  it("keeps long tests from starting after a shard's short ones, since tests run in file order", () => {
+    // Split evenly by time, each shard would end with a long test that starts once its short tests
+    // are done, at 4 s, and ends at 12 s. Together, the long tests end at 8 s, as the short ones do.
+    const specs = [
+      ...Array.from({ length: 16 }, (_, index) => ({ file: "a.spec.ts", titles: [`short ${index}`], seconds: 1 })),
+      { file: "z.spec.ts", titles: ["long one"], seconds: 8 },
+      { file: "z.spec.ts", titles: ["long two"], seconds: 8 },
+    ];
+    const { shards, output } = planShards(specs, recorded(specs), ["--target-seconds", "8", "--workers", "2"]);
+    expect(shards.map((shard) => shard.tests.length).sort()).toEqual([16, 2]);
+    expect(shards.find((shard) => shard.tests.length === 2)?.tests).toEqual(["z.spec.ts › long one", "z.spec.ts › long two"]);
+    expect(output).not.toContain("about 12 s");
   });
 
   it("estimates a test without a recorded duration from its file, and splits by count without durations", () => {

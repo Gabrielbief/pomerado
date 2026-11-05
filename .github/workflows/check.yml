@@ -216,7 +216,7 @@ jobs:
         run: >-
           node tools/browser-shards.ts plan --tests "$RUNNER_TEMP/browser-tests.json"
           --durations "$RUNNER_TEMP/browser-durations" --out "$RUNNER_TEMP/browser-shards"
-          --target-seconds 100 --workers 4 --max-shards 12
+          --target-seconds 80 --workers 4 --max-shards 16
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: browser-shards
