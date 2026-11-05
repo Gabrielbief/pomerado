@@ -66,6 +66,8 @@ bash tools/ci-scan.sh content
 
 Browser tests run the built `dist/`, so build before you run them. If you encounter test timeouts in resource-constrained or virtualized environments, reducing worker concurrency with `corepack pnpm test:browser --workers=2` may help. The content scan rejects a bare `#123` in files and commit messages, so link an issue there by its full URL. The [CI workflow](.github/workflows/check.yml) is the source of truth for the full set of checks, including a gitleaks secret scan.
 
+CI runs every test on every pull request. It also tries out test selection in shadow: [tools/test-map.ts](tools/test-map.ts) uses a daily map of the files each test file reads to work out which test files a change needs, and compares that with the results. Shadow selection never skips a test or fails a run.
+
 ## Open a pull request
 
 Describe the problem, the resulting behavior and how you verified it. Link related issues, and note any checks you could not run. Keep credentials, personal data and customer data out of code, tests, commit messages and pull request text.
