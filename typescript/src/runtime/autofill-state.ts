@@ -202,6 +202,8 @@ interface AutofillRecordedStep {
   readonly refills?: AutofillRecipeStep["refills"];
   /** The covering notice's own control the host clicks on this screen (`AutofillStep.dismiss`). */
   readonly dismiss?: string;
+  /** The action with a lasting effect on the account the submit takes (`AutofillStep.choice`). */
+  readonly choice?: AutofillRecipeStep["choice"];
   /** The page the step ran on, origin and path only. */
   readonly page: string;
 }
@@ -459,6 +461,7 @@ const armScreened = (
     ...(step.methods === undefined ? {} : { methods: step.methods }),
     ...(step.option === undefined ? {} : { option: step.option }),
     ...(step.dismiss === undefined ? {} : { dismiss: step.dismiss }),
+    ...(step.choice === undefined ? {} : { choice: step.choice }),
     page: inspection.page,
   });
   state.securityAnswers?.arm(step, values);

@@ -1,6 +1,6 @@
 import { Clock, Duration, Effect } from "effect";
 import type { YieldableError } from "effect/Cause";
-import type { AutofillRecipeStep } from "../destinations/autofill-recipe.js";
+import type { AutofillRecipeStep, SignInChoice } from "../destinations/autofill-recipe.js";
 import { resolvedPage, type SignInRecipeStep } from "../destinations/sign-in-recipe.js";
 import type {
   AutofillInspection,
@@ -60,6 +60,19 @@ const refusedScreen = <E extends YieldableError, V extends string, L extends Aut
       ...replay.firstCause.evidence(refusal),
     })
     .pipe(Effect.as(replay.outcome(refusal.reason)));
+
+/**
+ * A shown screen whose `choice` the run's caller did not allow: its step event says which choice,
+ * then the replay ends before its submit, having pressed nothing on it.
+ */
+const choiceNotAllowed = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  input: AutofillReplayInput<E, V, L>,
+  replay: Replay<E, V, L>,
+  choice: SignInChoice,
+) =>
+  input
+    .emit({ stage: "step", outcome: "refused", reason: "sign_in_choice_not_allowed", choice })
+    .pipe(Effect.as({ ...replay.outcome("sign_in_choice_not_allowed"), choice }));
 
 /**
  * A recorded code screen that never showed within its wait (`not_found`), with neither the marker
@@ -235,6 +248,12 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
     // The screen is shown and needs the login: a value-free replay stops before anything is sent.
     if (replay.valueFree && (recorded.approval !== undefined || step.fields.length > 0))
       return replay.outcome(valuesNeeded);
+    // A screen that names a choice is pressed only when the run's caller allowed that choice.
+    if (
+      recorded.choice !== undefined &&
+      !(input.hosted?.allowedChoices ?? []).includes(recorded.choice)
+    )
+      return yield* choiceNotAllowed(input, replay, recorded.choice);
     if (recorded.approval !== undefined) {
       settleCarried(replay);
       if (![...replay.state.submittedSlots].some(isIdentifier))

@@ -572,10 +572,13 @@ export const publicationReferencePolicy =
  * A temporary, narrow exception until choices on a site's sign-in pages become declared inputs of
  * the sign-in: such a choice, kept in the host's sign-in recipe, is no input design finding.
  * `decodePublicationDecision` sets aside `input_option` and `example_value` findings in the recipe
- * to match. Part of `publicationDecisionPolicy`, so every host's publication policy carries it.
+ * to match. A recipe screen that names a `choice` is the caller's per-run consent, which needs no
+ * confirmation finding, and a fieldless screen that signs out another device or trusts this
+ * browser without one is a confirmation finding. Part of `publicationDecisionPolicy`, so every
+ * host's publication policy carries it.
  */
 export const publicationSignInChoicePolicy =
-  "Sign-in page choices: a choice the host's sign-in makes on the site's own sign-in pages, such as a location, workspace or portal the site asks for before it signs in, is kept in the host's sign-in recipe (operation/auth-fill.json), which the minter cannot edit. Until such choices become declared sign-in inputs, such a choice is not an option on a write's path and not an input the tool leaves out: never an input_option, example_value or Unapplied input finding. This excuses nothing about the tool's own behavior, output or source, nor any other finding in the sign-in recipe or another host file: a correctness, broken-behavior, output, write confirmation, privacy, credential or authority finding there is judged and blocks as before, and so does any input finding about a choice off the sign-in pages.";
+  "Sign-in page choices: a choice the host's sign-in makes on the site's own sign-in pages, such as a location, workspace or portal the site asks for before it signs in, is kept in the host's sign-in recipe (operation/auth-fill.json), which the minter cannot edit. Until such choices become declared sign-in inputs, such a choice is not an option on a write's path and not an input the tool leaves out: never an input_option, example_value or Unapplied input finding. This excuses nothing about the tool's own behavior, output or source, nor any other finding in the sign-in recipe or another host file: a correctness, broken-behavior, output, write confirmation, privacy, credential or authority finding there is judged and blocks as before, and so does any input finding about a choice off the sign-in pages. A screen of host-generated operation/auth-fill.json that names choice is consent the caller gives per run. Each run presses its control only when that run's caller set the matching allow input, and a run without it stops before the control and changes nothing. Prefer treating such a screen as confirmed, with no confirmation finding about consent. A fieldless screen whose control signs out another device or session, or trusts this browser, and names no choice is a confirmation finding.";
 
 /**
  * What a publication decision returns, with the reason each kind of finding takes. A finding
