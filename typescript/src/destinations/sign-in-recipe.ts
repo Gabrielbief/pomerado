@@ -3,6 +3,7 @@ import type {
   AutofillApproval,
   AutofillPopup,
   RejectedMarker,
+  SignInChoice,
   SubmitKey,
 } from "./autofill-contracts.js";
 import {
@@ -18,6 +19,7 @@ import {
   PopupAutofillRecipe,
   PrivateIdentifierAutofillRecipe,
   publishedAutofillRecipe,
+  SignInChoiceAutofillRecipe,
   WildcardAutofillRecipe,
   WorkspaceAutofillRecipe,
   type AutofillRecipeOrigins,
@@ -55,8 +57,8 @@ export const SignInRecipeV3 = Schema.Struct({
   ),
 );
 /**
- * A recipe this host reads: version 1, 2, 4, 5, 6, 7, 8, 9, 10, 11 or 12 as every host writes it,
- * or this host's version 3.
+ * A recipe this host reads: version 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12 or 13 as every host writes
+ * it, or this host's version 3.
  */
 export const SignInRecipe = Schema.Union(
   LegacyAutofillRecipe,
@@ -71,6 +73,7 @@ export const SignInRecipe = Schema.Union(
   NationalPhoneAutofillRecipe,
   ClickLayerAutofillRecipe,
   MethodOptionAutofillRecipe,
+  SignInChoiceAutofillRecipe,
 );
 export type SignInRecipe = typeof SignInRecipe.Type;
 export type SignInRecipeStep = AutofillRecipeStep;
@@ -81,11 +84,11 @@ export const resolvedPage = (step: SignInRecipeStep, workspace: string | undefin
     ? undefined
     : recordedScreenPage(step, workspace);
 
-const knownVersions: readonly unknown[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+const knownVersions: readonly unknown[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 
 /**
  * A published recipe file read back: the recipe, `unknown_version` for a version this host does
- * not know, else `invalid`. Version 1, 2, 4, 5, 6, 7, 8, 9, 10, 11 and 12 decode as every host
+ * not know, else `invalid`. Version 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12 and 13 decode as every host
  * reads them; version 3 is read only here.
  */
 export const decodeSignInRecipe = (text: string): SignInRecipe | "invalid" | "unknown_version" => {
@@ -132,6 +135,8 @@ export interface RecordedSignInStep {
   readonly refills?: SignInRecipeStep["refills"];
   /** The covering notice's own control the host clicked on this screen. */
   readonly dismiss?: string | undefined;
+  /** The action with a lasting effect on the account the screen's submit takes. */
+  readonly choice?: SignInChoice | undefined;
   /** The page the step ran on, origin and path only. */
   readonly page: string;
   /** The segments of `page`'s path written as `*`, which any one segment matches. */
@@ -191,10 +196,11 @@ const inStepOrder = (step: SignInRecipeStep): SignInRecipeStep => ({
   ...(step.submitVia === undefined ? {} : { submitVia: step.submitVia }),
   ...(step.methods === undefined ? {} : { methods: step.methods }),
   ...(step.dismiss === undefined ? {} : { dismiss: step.dismiss }),
+  ...(step.choice === undefined ? {} : { choice: step.choice }),
 });
 
 /**
- * A recipe as `auth-fill.json` holds it: `version`, then version 4's to 12's `workspace`, then each
+ * A recipe as `auth-fill.json` holds it: `version`, then version 4's to 13's `workspace`, then each
  * screen in `recipeStep`'s key order (a workspace screen's `origin` first), indented two spaces,
  * with no final newline. The same recipe is the same bytes from any
  * host that writes it this way.
@@ -211,7 +217,8 @@ export const signInRecipeText = (recipe: SignInRecipe) =>
         recipe.version !== 9 &&
         recipe.version !== 10 &&
         recipe.version !== 11 &&
-        recipe.version !== 12) ||
+        recipe.version !== 12 &&
+        recipe.version !== 13) ||
       recipe.workspace === undefined
         ? {}
         : { workspace: { parent: recipe.workspace.parent } }),

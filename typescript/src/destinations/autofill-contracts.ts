@@ -12,6 +12,13 @@ export type SignInMethodChoice = typeof SignInMethodChoice.Type;
  * the host chooses it with the browser's own select action, which fires the page's change handler.
  */
 export const MethodOption = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000));
+/**
+ * A sign-in screen's action with a lasting effect on the account, which each run's caller allows
+ * or not: signing out another device or session, or trusting this browser for later sign-ins. A
+ * run presses such a screen's control only when its caller allowed that choice.
+ */
+export const SignInChoice = Schema.Literal("sign_out_other_device", "trust_this_device");
+export type SignInChoice = typeof SignInChoice.Type;
 
 /**
  * How a `date_of_birth` field takes the date: a whole date in one of these layouts, or, for a

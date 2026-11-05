@@ -46,6 +46,7 @@ import {
   privateIdentifierMessage,
   RejectedMarker,
   SecretSlots,
+  SignInChoice,
   SignInMethodChoice,
   stepFieldsFit,
   stepFieldsMessage,
@@ -742,6 +743,13 @@ export const SignInStep = Schema.Union(
      * field. Never a submit, a field or a control of the sign-in's own form.
      */
     dismiss: Schema.optional(SignInSelector),
+    /**
+     * The action with a lasting effect on the account this screen's submit takes: signing out
+     * another device or session, or trusting this browser. The recipe records it, and each run
+     * presses the submit only when its caller allowed that choice. Only a step with no fields and
+     * one submit, and no method choice, names one.
+     */
+    choice: Schema.optional(SignInChoice),
   }).pipe(
     Schema.filter((step) => step.fields.length > 0 || step.submit !== undefined, {
       message: () => "a sign-in step fills a field or clicks a control",
@@ -774,6 +782,12 @@ export const SignInStep = Schema.Union(
         message: () =>
           "a method choice fills no field, and its submit and option are one of its methods' selector and option",
       },
+    ),
+    Schema.filter(
+      (step) =>
+        step.choice === undefined ||
+        (step.fields.length === 0 && step.submit !== undefined && step.methods === undefined),
+      { message: () => "a choice step fills no field and names one submit, with no method choice" },
     ),
   ),
   Schema.Struct({

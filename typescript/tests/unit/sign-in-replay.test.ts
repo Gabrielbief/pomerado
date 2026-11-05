@@ -517,6 +517,24 @@ it("asks a recipe's method choice and clicks the recorded control of the method 
   });
 });
 
+it("stops before a version 13 choice screen's control when the run does not allow its choice", async () => {
+  const fake = fakeSite({ method: true });
+  const { ask } = owner();
+  const recipe: SignInRecipe = {
+    version: 13,
+    steps: [
+      loginStep,
+      { page: `${origin}/method`, fields: [], submit: "#by-text", submittedBy: "host", choice: "sign_out_other_device" },
+    ],
+    signedIn: { selector: "#account" },
+  };
+  expect(await signIn(recipe, fake, ask)).toEqual(
+    Either.left(new SignInRunFailed({ code: "RecipeFailed", reason: "sign_in_choice_not_allowed" })),
+  );
+  // The login went out, and the screen's control was never clicked.
+  expect(fake.fills).toEqual([{ page: "login", values: [account.username, account.password] }]);
+});
+
 /** A code screen, on the site's own origin unless `at` says otherwise. */
 const codeScreenAt = (at = origin) => ({
   page: `${at}/code`,
@@ -639,7 +657,7 @@ it("fails RecipeFailed when a recorded screen shows on another origin than the r
 });
 
 it.each([
-  ["an unknown version", { ...recipeOf(), version: 13 }, "unknown_version"],
+  ["an unknown version", { ...recipeOf(), version: 14 }, "unknown_version"],
   ["a recipe without steps", { ...recipeOf(), steps: [] }, "invalid"],
 ])("refuses %s with MissingRecipe before opening anything", async (_case, recipe, reason) => {
   const fake = fakeSite();

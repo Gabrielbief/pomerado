@@ -7,6 +7,7 @@ import {
   type AutofillRecipeStep,
   isSecondFactor,
   type RejectedMarker,
+  type SignInChoice,
   type SignInMethodChoice,
 } from "../destinations/autofill-recipe.js";
 import type {
@@ -64,7 +65,9 @@ type SignedInReplay = {
  * - `unclear`: something may have reached the site and the recipe's sign-in check failed.
  * `password_rejected` means the site took the password and showed its screen again, so the owner
  * may be asked for the login; `challenge_unsolved` means a screen never showed behind a challenge
- * the host could not clear, whose vendor `challenge` names.
+ * the host could not clear, whose vendor `challenge` names; `sign_in_choice_not_allowed` means a
+ * recorded screen that names a `choice` showed and the run's caller did not allow it, so the
+ * replay stopped before its submit, and `choice` names it.
  */
 export type AutofillReplayOutcome<V extends string = string> =
   | (SignedInReplay & { readonly alreadySignedIn: true })
@@ -78,12 +81,14 @@ export type AutofillReplayOutcome<V extends string = string> =
       readonly reason: string;
       readonly rejectedFields?: readonly RejectedMarker["slot"][];
       readonly challenge?: V;
+      readonly choice?: SignInChoice;
     }
   | {
       readonly outcome: "unclear";
       readonly reason: string;
       readonly rejectedFields?: readonly RejectedMarker["slot"][];
       readonly challenge?: V;
+      readonly choice?: SignInChoice;
     };
 
 /** Private existing-attempt state survives browser and credential replay rebuilds. */
@@ -147,7 +152,9 @@ export type SignInMethodOption = NonNullable<AutofillRecipeStep["methods"]>[numb
  *   given back;
  * - `identifierConflict`: whether the host refuses the identifiers a step would type;
  * - `refuseShownAnswer`: after a failed check, a saved answer whose question shows again;
- * - `resubmit`: the challenge look at a screen's deadline, which may send the last screen again.
+ * - `resubmit`: the challenge look at a screen's deadline, which may send the last screen again;
+ * - `allowedChoices`: the recorded screens' choices this run's caller allowed, whose submits the
+ *   replay presses. None when absent, so the replay stops before any screen that names a choice.
  */
 export interface HostedSignIn<
   E extends YieldableError,
@@ -176,6 +183,7 @@ export interface HostedSignIn<
     | ((ran: readonly AutofillStep[]) => Effect.Effect<void, E>)
     | undefined;
   readonly resubmit?: ((session: ReplaySession<E, V, L>) => ClearThenResubmit<E, V>) | undefined;
+  readonly allowedChoices?: readonly SignInChoice[] | undefined;
 }
 
 export interface AutofillReplayInput<

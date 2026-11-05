@@ -36,6 +36,7 @@ import type {
   DateControl,
   DateOfBirthFormat,
   PhoneFormat,
+  SignInChoice,
   SignInMethodChoice,
   RejectedMarker,
   SubmitKey,
@@ -139,6 +140,8 @@ export interface AutofillStepRequest {
   readonly option?: string | undefined;
   /** The own close, reject or accept control of a notice that covers the screen (`AutofillStep`). */
   readonly dismiss?: string | undefined;
+  /** The action with a lasting effect on the account the submit takes (`AutofillStep`). */
+  readonly choice?: SignInChoice | undefined;
 }
 
 /**
@@ -188,6 +191,12 @@ export interface AutofillStep<Slot extends FillSlot = AutofillSlot> {
    * covered submit from the keyboard by itself, and any fill clicks such a control by itself.
    */
   readonly submitVia?: "keyboard" | "click_layer" | undefined;
+  /**
+   * The action with a lasting effect on the account the submit takes, on a step with no fields and
+   * one submit. The recipe records it, and a run presses that submit only when its caller allowed
+   * the choice.
+   */
+  readonly choice?: SignInChoice | undefined;
 }
 
 /** Whether the host submits the step itself: it clicks its submit or presses its submit key. */

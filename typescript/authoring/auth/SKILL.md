@@ -366,6 +366,13 @@ passkey, adding a phone number or turning on two-factor. Record its decline cont
 check, so runs pass it too; a run where it does not show skips it once the check verifies the
 session.
 
+When a sign-in screen asks to sign out another device or session, or to trust this browser,
+before the site goes on, send it as a `signInStep` with no fields, its control as `submit`, and
+`choice` naming that kind (`sign_out_other_device` or `trust_this_device`). Ask the owner first,
+as for any step that changes the account. Their yes covers this build. Each later run presses the
+control when its caller allows that choice and stops before it otherwise. When the screen offers
+a decline that still finishes the sign-in, prefer recording that decline as a plain step.
+
 # Signed in
 
 Prefer an observed protected business/account page or authenticated workflow control that the
