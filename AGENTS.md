@@ -48,5 +48,6 @@ GITLEAKS=/path/to/gitleaks bash tools/ci-scan.sh secrets
 - Add to this package only code the local host runs, or a hook interface another host implements.
 - Keep `#N` style references out of commit messages, where N is a number. The content scan rejects them. Link a public issue by its full URL.
 - Public text stays generic. Keep customer data, credentials, incidents, internal hostnames and internal references out of code, tests, commit messages and pull request text.
+- Workflows name the exact code they run: each action at a full commit SHA with its version in a comment, each container image at an `@sha256:` digest, and no download piped into a shell. `pnpm test` runs `tools/check-workflows.ts`, which checks this, and Dependabot moves the action pins weekly.
 - Third-party code keeps its own license. Put its license and notice under `third-party/`, as `third-party/codex/` does for the Guardian policy, and ship them with the package.
 - Contributions are accepted under the MIT License.
