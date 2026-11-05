@@ -29,7 +29,7 @@ GITLEAKS=/path/to/gitleaks bash tools/ci-scan.sh secrets
 - `typescript/src/` holds the minter, Guardian, the runtime, browser helpers and the local MCP host.
 - `typescript/authoring/` holds the minter's shared prompts and examples.
 - `typescript/tests/unit/` holds Vitest tests, and `typescript/tests/browser/` holds Playwright tests with local fixture sites.
-- `tools/` holds build helpers and the CI scans.
+- `tools/` holds build helpers, the CI scans and the browser shard planner.
 - `docs/` holds guides. [docs/how-it-works.md](docs/how-it-works.md) lists each module.
 - In code, OpenAI model IDs are set only in `typescript/src/models/models.ts`. A unit test enforces it.
 
