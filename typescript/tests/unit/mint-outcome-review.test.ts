@@ -275,11 +275,48 @@ it("runs a write step again after the host reports the first submission was neve
   expect(outcome).toMatchObject({ build: "published" });
 });
 
+type FailureFields = ConstructorParameters<typeof MintFailure>[0];
+/** A host check stopped the step at its first commit, before anything of it went out. */
+const stoppedAtCommit = {
+  code: "Unavailable",
+  failureDetail: { subCause: "autofill_step_failed", operation: "autofill.replay" },
+} satisfies FailureFields;
+/** The step's runner may have run: its result could not be read. */
+const resultUnread = {
+  code: "Unavailable",
+  execution: {
+    phase: "execute",
+    reason: "invalid_response",
+    dispatch: "unknown",
+    stage: "result_decode",
+    runnerResult: {
+      cause: "truncated",
+      resultBytes: 12,
+      exitCode: 0,
+      stdoutBytes: 0,
+      stderrBytes: 0,
+      eventsBytes: 0,
+      eventsComplete: true,
+      missingChannels: [],
+    },
+  },
+} satisfies FailureFields;
+/** The step's runner finished, and its capture failed. */
+const captureFailed = {
+  code: "Unavailable",
+  runnerFailure: {
+    status: "failed",
+    effect: "possible",
+    errorCode: "unclassified",
+    captureGap: "capture_publication",
+  },
+} satisfies FailureFields;
+
 /**
  * A repair, with no outcome review, whose write step `src/book.ts` fails at the host the first
- * time and is submitted again. The failure carries `nothingSent` when `nothingSent` is set.
+ * time with `failure` and is submitted again.
  */
-const hostStoppedWrite = async (nothingSent: boolean) => {
+const hostStoppedWrite = async (failure: FailureFields) => {
   const runs: string[] = [];
   const f = await fixture(
     (_request, index) =>
@@ -291,18 +328,8 @@ const hostStoppedWrite = async (nothingSent: boolean) => {
       reviewAndExecute: allowedStep((entrypoint) =>
         Effect.suspend(() => {
           runs.push(entrypoint);
-          // A host check stopped the step at its first commit, before anything of it went out.
           return runs.length === 1
-            ? Effect.fail(
-                new MintFailure({
-                  code: "Unavailable",
-                  failureDetail: {
-                    subCause: "autofill_step_failed",
-                    operation: "autofill.replay",
-                  },
-                  ...(nothingSent ? { nothingSent: true as const } : {}),
-                }),
-              )
+            ? Effect.fail(new MintFailure(failure))
             : Effect.succeed({
                 executionId: "booked",
                 status: "completed" as const,
@@ -328,8 +355,8 @@ const hostStoppedWrite = async (nothingSent: boolean) => {
 // `execution.dispatch`, is tracked as a lost write: with no outcome review, the repair can never
 // run the step again.
 it("runs a repair's write step again after a host failure that says nothing was sent", async () => {
-  const flagged = await hostStoppedWrite(true);
-  const unflagged = await hostStoppedWrite(false);
+  const flagged = await hostStoppedWrite({ ...stoppedAtCommit, nothingSent: true });
+  const unflagged = await hostStoppedWrite(stoppedAtCommit);
 
   // The minter hears the same failure either way.
   expect(flagged.first).toMatchObject({ status: "tool_failed", code: "Unavailable" });
@@ -347,6 +374,20 @@ it("runs a repair's write step again after a host failure that says nothing was 
   expect(unflagged.writes).toEqual([
     expect.objectContaining({ status: "result_lost", entrypoint: "src/book.ts" }),
   ]);
+  // A failure that itself says the step may have run stays a tracked write despite the flag.
+  for (const ran of [resultUnread, captureFailed]) {
+    const contradicted = await hostStoppedWrite({ ...ran, nothingSent: true });
+    const plain = await hostStoppedWrite(ran);
+    expect(contradicted.first).toEqual(plain.first);
+    expect(contradicted.runs).toEqual(["src/book.ts"]);
+    expect(contradicted.again).toMatchObject({ status: "unsupported" });
+    expect(JSON.stringify(contradicted.again)).toMatch(
+      /src\/book\.ts stays refused for the rest of this attempt/u,
+    );
+    expect(contradicted.writes).toEqual([
+      expect.objectContaining({ status: "result_lost", entrypoint: "src/book.ts" }),
+    ]);
+  }
 });
 
 // Fails when a write's digest follows the host runtime's relative import out of the workspace:
