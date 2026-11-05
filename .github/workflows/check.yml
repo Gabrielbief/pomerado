@@ -282,10 +282,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # A pull request checks out its merge with the base branch, whose first parent is the base.
-          fetch-depth: 2
+          # A pull request checks out its merge with the base branch, whose first parent is the base;
+          # test selection also needs the history back to the test map's commit.
+          fetch-depth: ${{ env.SELECT_TESTS == 'true' && '0' || '2' }}
           persist-credentials: false
-          fetch-depth: ${{ env.SELECT_TESTS == 'true' && '0' || '1' }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.22.1
