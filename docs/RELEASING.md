@@ -88,23 +88,30 @@ Known limits:
 
 The [Check workflow](../.github/workflows/check.yml) picks each job's runner from facts GitHub sets about the run, and `typescript/tests/unit/ci-runner-routing.test.ts` checks every route:
 
-| Run | `check` and browser jobs | Every other job |
-| --- | --- | --- |
-| A pull request from a fork | GitHub-hosted | GitHub-hosted |
-| A pull request from a branch here by a maintainer | `vars.CI_RUNNER_MAINTAINER` | GitHub-hosted |
-| A pull request from a branch here by anyone else, such as a bot | GitHub-hosted | GitHub-hosted |
-| A push to `main`, through the Release workflow, or a merge queue run | `vars.CI_RUNNER_TRUSTED` | GitHub-hosted |
-| A run in another repository that calls `check.yml` | GitHub-hosted | GitHub-hosted |
+| Run | `check` job | Browser jobs | Every other job |
+| --- | --- | --- | --- |
+| A pull request from a fork | GitHub-hosted | GitHub-hosted | GitHub-hosted |
+| A pull request from a branch here by a maintainer | `vars.CI_RUNNER_MAINTAINER` | `vars.CI_RUNNER_MAINTAINER` | GitHub-hosted |
+| A pull request from a branch here by anyone else, such as a bot | GitHub-hosted | GitHub-hosted | GitHub-hosted |
+| A push to `main`, through the Release workflow | GitHub-hosted | `vars.CI_RUNNER_TRUSTED` | GitHub-hosted |
+| A run in another repository that calls `check.yml` | GitHub-hosted | GitHub-hosted | GitHub-hosted |
 
-A maintainer is an author GitHub reports with the association `OWNER` or `MEMBER`, or one whose login the `CI_MAINTAINERS` variable lists, as a JSON array such as `["octocat"]`. GitHub reports an organization member whose membership is private as a contributor, so list them there. An unset variable falls back to a Blacksmith runner. Set a variable to a runner label to move those jobs, and delete it to move them back. Standard GitHub-hosted runners are free for public repositories, and their `ubuntu-latest` has 4 vCPUs, as the browser job's `--workers=4` expects. Jobs that hold a secret, such as the canary publish, the promotion and the failure alert, always run on GitHub-hosted runners, which give every job a fresh machine.
+- **Maintainers.** A maintainer is an author GitHub reports with the association `OWNER` or `MEMBER`, or one whose login the `CI_MAINTAINERS` variable lists, as a JSON array such as `["octocat"]`. GitHub reports an organization member whose membership is private as a contributor, so list them there. The value must be a JSON array: an invalid one fails the Check workflow for every pull request from a branch here whose author isn't `OWNER` or `MEMBER`. This is narrower than the approval gate's maintainer, anyone with write access, so another writer's pull requests pass the gate at once but run on GitHub-hosted runners until listed.
+- **Switching.** An unset runner variable falls back to a Blacksmith runner. Set a variable to a runner label with 4 vCPUs, as the browser job's `--workers=4` expects, to move those jobs, and delete it to move them back. Deleting a variable doesn't move jobs already waiting for a runner, so cancel and re-run those. Standard GitHub-hosted runners are free for public repositories, and their `ubuntu-latest` has 4 vCPUs.
+- **The published tarball.** On a push to `main`, the `check` job builds and tests the tarball the canary publishes, so it runs on a GitHub-hosted runner. It records the artifact's ID and the tarball's SHA-256, and the canary job downloads that artifact by ID and refuses to publish any other bytes. Jobs that hold a secret, such as the canary publish, the promotion and the failure alert, also always run on GitHub-hosted runners, which give every job a fresh machine.
+- **Merge queues.** A merge queue gets no Check run yet. The change that adds a `merge_group` trigger also decides its route.
 
-This routing is not a security boundary. A fork's pull request runs its own copy of the workflow, so it can name any runner label. Every outside contributor's runs wait for a maintainer's approval, and the maintainer checks changes to `.github/`, `package.json` and the lockfile before approving. A self-hosted runner that either variable names must also enforce its route on its own side:
+This routing is not a security boundary. A fork's pull request runs its own copy of the workflow, so it can name any runner label, and so can anyone with write access in a branch. Every outside contributor's runs wait for a maintainer's approval, and the maintainer checks changes to `.github/`, `package.json` and the lockfile before approving. A self-hosted runner that either variable names must enforce its route on its own side:
 
-- A job-started hook in the runner's image, which the workflow can't change, reads the event GitHub delivers and refuses the job before any step runs unless it is one the runner takes. A maintainer runner takes only a `pull_request` whose head repository is this repository and whose author is a maintainer. A trusted runner takes only a push to `refs/heads/main` and a `merge_group` run. The hook refuses anything it can't read.
-- The trusted runner and the maintainer runner use separate machines, so pull request code never runs where a later job builds the published tarball.
-- Each job gets a fresh, unprivileged environment: one job per runner, no Docker daemon, no privilege escalation, no cloud credentials or service account token, and no route to cloud metadata services or private networks.
-- The runner registers to this repository only, or to a runner group limited to it. A trusted runner's group also limits it to workflows on `main`.
-- Its image already holds Node, pnpm and Chromium with its system libraries, built from public sources only. Without `sudo`, the browser job installs Chromium without system libraries.
+- **A job-started hook** in the runner's image, set through `ACTIONS_RUNNER_HOOK_JOB_STARTED` in the runner's own environment, reads the event GitHub delivers in `GITHUB_EVENT_PATH` and refuses the job before any step runs unless it is one the runner takes. It refuses anything it can't read, and fails on a timeout.
+  - It goes by `GITHUB_EVENT_NAME`, not the payload's shape: `pull_request_review` and `pull_request_target` payloads carry the same pull request fields.
+  - It compares names exactly, with case, since GitHub's expressions compare strings without case and git refs have it.
+  - A maintainer runner takes only a `pull_request` whose head repository is this repository and not a fork, and whose author and sender, the account whose push or re-run started it, are both maintainers. The hook can't read repository variables, so the runner's own configuration lists the maintainers, preferably by user ID, since a login can change hands.
+  - A trusted runner takes only a push to `refs/heads/main` whose `GITHUB_WORKFLOW_REF` is this repository's `release.yml` on `refs/heads/main`.
+- **Separate runners.** The trusted runner and the maintainer runner use separate machines, namespaces and registration credentials, and no runner can read any registration credential. Whoever holds the trusted runner's credential can take its jobs.
+- **A fresh, unprivileged job.** One job per runner, no Docker daemon, no privilege escalation, no service account token or cloud credentials, and no route to the cluster's API, cloud metadata services or private networks. No volume, package store or cache is shared between the two runners. The image is pinned by digest.
+- **Registration.** The maintainer runner registers to this repository only, or to an organization runner group limited to it with "Allow public repositories" on. The trusted runner needs an organization runner group: limited to this repository, with "Allow public repositories" on, and with workflow access limited to `Pomerado/pomerado/.github/workflows/check.yml@refs/heads/main`. A group's workflow list names the workflow that defines the jobs, here the called `check.yml`.
+- **The image** already holds Node, pnpm and Chromium with its system libraries, built from public sources only. Where it can't install packages, as root or through `sudo`, the browser job installs Chromium without system libraries.
 
 ## Changes and versions
 

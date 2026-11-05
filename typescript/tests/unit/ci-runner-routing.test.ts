@@ -188,21 +188,32 @@ describe("CI runner routing", () => {
     }
   });
 
-  it("runs a push to main and a merge queue run on the trusted runner", () => {
-    for (const event of ["push", "merge_group"]) {
-      for (const job of routed) {
-        expect(runnerFor(job.runsOn, contextsOf({ event }))).toBe("trusted-runner");
-        expect(runnerFor(job.runsOn, contextsOf({ event, vars: {} }))).toBe(fallback);
-        // The maintainer runner never takes a trusted run.
-        expect(runnerFor(job.runsOn, contextsOf({ event, vars: { CI_RUNNER_MAINTAINER: "x" } }))).toBe(
-          fallback,
-        );
-      }
+  it("runs a push to main's browser jobs on the trusted runner", () => {
+    const browser = routed.filter((job) => job.job === "browser");
+    expect(browser).toHaveLength(1);
+    for (const job of browser) {
+      expect(runnerFor(job.runsOn, contextsOf({ event: "push" }))).toBe("trusted-runner");
+      expect(runnerFor(job.runsOn, contextsOf({ event: "push", vars: {} }))).toBe(fallback);
+      // The maintainer runner never takes a trusted run.
+      expect(runnerFor(job.runsOn, contextsOf({ event: "push", vars: { CI_RUNNER_MAINTAINER: "x" } }))).toBe(
+        fallback,
+      );
     }
   });
 
-  it("runs a push to another branch, and any run of another repository, on a GitHub-hosted runner", () => {
+  it("builds the tarball a push to main publishes on a GitHub-hosted runner", () => {
+    // check.yml's check job packs the tarball the release workflow publishes.
+    const builder = routed.filter((job) => job.workflow === "check.yml" && job.job === "check");
+    expect(builder).toHaveLength(1);
+    for (const vars of [variables, {}]) {
+      expect(runnersFor({ event: "push", vars }, builder)).toEqual(new Set([githubHosted]));
+    }
+  });
+
+  it("runs a push to another branch, a merge queue run and any run of another repository on a GitHub-hosted runner", () => {
     expect(runnersFor({ event: "push", ref: "refs/heads/feature" })).toEqual(new Set([githubHosted]));
+    // A merge queue has no route of its own yet, so it gets no self-hosted runner.
+    expect(runnersFor({ event: "merge_group" })).toEqual(new Set([githubHosted]));
     for (const event of ["push", "merge_group", "pull_request"]) {
       expect(
         runnersFor({ repository: "someone/pomerado", event, headRepository: "someone/pomerado", association: "OWNER" }),
@@ -222,15 +233,28 @@ describe("CI runner routing", () => {
     }
   });
 
-  it("routes only on facts GitHub sets, never on text a pull request controls", () => {
-    for (const job of routed) {
-      const eventPaths = new Set(job.runsOn.match(/github\.event\.[A-Za-z0-9_.]+/g));
-      expect([...eventPaths].toSorted()).toEqual([
-        "github.event.pull_request.author_association",
-        "github.event.pull_request.head.repo.full_name",
-        "github.event.pull_request.user.login",
-      ]);
-      expect(job.runsOn).not.toMatch(/head_ref|inputs\.|matrix\.|env\./);
+  it("never routes on text a pull request controls", () => {
+    // A pull request's author names its branch, title, labels and body, and so could set each to a
+    // runner label. Neither a fork nor a non-maintainer here can steer the route with them.
+    const steering = "maintainer-runner";
+    const outsiders = associations.filter((name) => name !== "OWNER" && name !== "MEMBER");
+    for (const [headRepository, association] of [
+      ...associations.map((name) => ["someone/pomerado", name] as const),
+      ...outsiders.map((name) => [repository, name] as const),
+    ]) {
+      const run = { event: "pull_request", headRepository, association };
+      const contexts = contextsOf(run);
+      const event = contexts.github.event as { pull_request: Record<string, unknown> };
+      Object.assign(event.pull_request, {
+        title: steering,
+        body: steering,
+        labels: [{ name: steering }, { name: "trusted-runner" }],
+        head: { ...(event.pull_request["head"] as object), ref: steering, label: steering },
+      });
+      const github = { ...contexts.github, head_ref: steering, base_ref: "main" };
+      for (const job of routed) {
+        expect(runnerFor(job.runsOn, { github, vars: contexts.vars })).toBe(githubHosted);
+      }
     }
   });
 });

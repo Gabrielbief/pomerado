@@ -5,8 +5,10 @@
 #   CI_RUNNER_MAINTAINER repository variable names. A maintainer is an author GitHub reports as an
 #   owner or member, or whose login the CI_MAINTAINERS variable lists, as a JSON array. GitHub
 #   reports a member whose organization membership is private as a contributor, so list them.
-# - A push to main, through the release workflow, and a merge queue run use the runner the
-#   CI_RUNNER_TRUSTED variable names.
+# - On a push to main, through the release workflow, the browser jobs use the runner the
+#   CI_RUNNER_TRUSTED variable names. The check job, which builds the tarball release publishes,
+#   runs on a GitHub-hosted runner. A merge queue needs its own trigger and route here first.
+# A runner either variable names must have 4 vCPUs, as the browser job's --workers=4 expects.
 # An unset variable falls back to a Blacksmith runner. The scans and the `CI` job are short and
 # always run on GitHub-hosted runners. typescript/tests/unit/ci-runner-routing.test.ts checks these
 # routes for forks, outside authors, maintainers and pushes.
@@ -29,6 +31,14 @@ on:
         required: false
         type: string
         default: ""
+    # The release workflow publishes exactly this artifact, and checks these bytes before it does.
+    outputs:
+      package-artifact-id:
+        description: ID of the packed package artifact the check job uploaded
+        value: ${{ jobs.check.outputs.package-artifact-id }}
+      package-sha256:
+        description: SHA-256 of the packed package tarball the check job built and tested
+        value: ${{ jobs.check.outputs.package-sha256 }}
 permissions:
   contents: read
 jobs:
@@ -95,18 +105,20 @@ jobs:
         run: bash tools/ci-scan.sh content
   # Typecheck, build, unit tests and the packed package check. The browser tests run apart, in the
   # browser job's shards, so the two run at once.
+  # On a push to main it builds the tarball the release workflow publishes, so there it runs on a
+  # GitHub-hosted runner, a fresh machine, never on CI_RUNNER_TRUSTED.
   check:
     runs-on: >-
-      ${{ github.repository == 'Pomerado/pomerado'
-      && (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'merge_group')
-      && (vars.CI_RUNNER_TRUSTED || 'blacksmith-4vcpu-ubuntu-2404')
-      || github.repository == 'Pomerado/pomerado' && github.event_name == 'pull_request'
+      ${{ github.repository == 'Pomerado/pomerado' && github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
       && (contains(fromJSON('["OWNER", "MEMBER"]'), github.event.pull_request.author_association)
       || contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.event.pull_request.user.login))
       && (vars.CI_RUNNER_MAINTAINER || 'blacksmith-4vcpu-ubuntu-2404')
       || 'ubuntu-latest' }}
     timeout-minutes: 10
+    outputs:
+      package-artifact-id: ${{ steps.package.outputs.artifact-id }}
+      package-sha256: ${{ steps.package-digest.outputs.sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -167,7 +179,19 @@ jobs:
           void expectFailure;
           TS
           "$GITHUB_WORKSPACE/node_modules/.bin/tsc" --noEmit --strict --skipLibCheck --target ES2024 --module NodeNext --moduleResolution NodeNext consumer.mts
+      - name: Record the tarball's SHA-256
+        id: package-digest
+        shell: bash
+        run: |
+          shopt -s nullglob
+          tarballs=("$RUNNER_TEMP"/pomerado-artifact/*.tgz)
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "::error::Expected one packed tarball. Found ${#tarballs[@]}."
+            exit 1
+          fi
+          echo "sha256=$(sha256sum "${tarballs[0]}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        id: package
         with:
           name: pomerado-package
           path: ${{ runner.temp }}/pomerado-artifact/*.tgz
@@ -178,7 +202,7 @@ jobs:
     name: Browser tests (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: >-
       ${{ github.repository == 'Pomerado/pomerado'
-      && (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'merge_group')
+      && github.event_name == 'push' && github.ref == 'refs/heads/main'
       && (vars.CI_RUNNER_TRUSTED || 'blacksmith-4vcpu-ubuntu-2404')
       || github.repository == 'Pomerado/pomerado' && github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
@@ -205,12 +229,13 @@ jobs:
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm build
-      # A runner without sudo must already hold Chromium's system libraries, as a self-hosted
-      # runner's image does, so only Chromium itself is installed there.
+      # A runner that can't install packages, neither as root nor through sudo, must already hold
+      # Chromium's system libraries, as a self-hosted runner's image does, so only Chromium itself
+      # is installed there.
       - name: Install Chromium
         shell: bash
         run: |
-          if sudo -n true 2>/dev/null; then
+          if [ "$(id -u)" = 0 ] || sudo -n true 2>/dev/null; then
             corepack pnpm exec playwright install --with-deps chromium
           else
             corepack pnpm exec playwright install chromium
