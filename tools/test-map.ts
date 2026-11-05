@@ -140,14 +140,26 @@ export const select = (
       if (test !== undefined) chosen.add(test);
     }
   };
-  const named = (path: string) => {
+  const readersOf = ({ path, status }: Change): readonly number[] => {
+    const ids = [...(map.files[path] ?? [])];
+    if (status === "modified") return ids;
+    // A listing shows which files a folder holds, so adding or deleting one changes it.
+    ids.push(...(map.folders[`${dirname(path)}/`] ?? []));
+    for (let folder = dirname(path); folder !== "."; folder = dirname(folder))
+      ids.push(...(map.folders[`${folder}/**`] ?? []));
+    return ids;
+  };
+  /** Changed code files that name a new file by a relative path, such as "./helper.js". */
+  const referrers = (path: string) => {
     const stem = basename(path).replace(/\.[^.]+$/u, "");
-    return changes.some(
+    const reference = new RegExp(`/${escapeRegExp(stem)}(\\.\\w+)?["'\`]`, "u");
+    return changes.filter(
       (other) =>
         other.path !== path &&
         other.status !== "deleted" &&
+        !isDocumentation(other.path) &&
         headFiles.has(other.path) &&
-        readHead(other.path).includes(stem),
+        reference.test(readHead(other.path)),
     );
   };
   let substantive = false;
@@ -158,10 +170,7 @@ export const select = (
       if (headFiles.has(path)) chosen.add(path);
       continue;
     }
-    const readers = [
-      ...(map.files[path] ?? []),
-      ...(status === "modified" ? [] : (map.folders[`${dirname(path)}/`] ?? [])),
-    ];
+    const readers = readersOf(change);
     if (readers.length > 0) {
       substantive = true;
       choose(readers);
@@ -169,7 +178,18 @@ export const select = (
     }
     if (isDocumentation(path)) continue;
     substantive = true;
-    if (status === "added" && named(path)) continue;
+    if (status === "added") {
+      // A new file reaches tests through the files that load it: covered when one of them is a
+      // test or has readers of its own, whose tests then run.
+      const covering = referrers(path).filter(
+        (other) => suiteOf(other.path) !== undefined || readersOf(other).length > 0,
+      );
+      for (const other of covering) {
+        if (suiteOf(other.path) !== undefined) chosen.add(other.path);
+        choose(readersOf(other));
+      }
+      if (covering.length > 0) continue;
+    }
     unseen.push(path);
   }
   if (unseen.length > 0) return full(unseen.map((path) => `no test in the map read ${path}`));
@@ -270,6 +290,31 @@ export const readResults = (
   return { failed: [...failed].toSorted(), seconds };
 };
 
+/**
+ * Compares a selection with a run's JSON results: the failed test files, those the selection left
+ * out, and the test-seconds of each suite the selection kept out of the run's total.
+ */
+export const compare = (selection: Selection, results: readonly unknown[]) => {
+  const read = results.map(readResults);
+  const failed = [...new Set(read.flatMap((result) => result.failed))].toSorted();
+  // Shards split one spec file's tests, so a file's seconds add up across results.
+  const seconds: Record<string, number> = {};
+  for (const result of read)
+    for (const [path, time] of Object.entries(result.seconds))
+      seconds[path] = (seconds[path] ?? 0) + time;
+  const selected = new Set([...selection.unit, ...selection.browser]);
+  const missed = selection.mode === "full" ? [] : failed.filter((test) => !selected.has(test));
+  const share = (suite: Suite) => {
+    const files = Object.entries(seconds).filter(([path]) => suiteOf(path) === suite);
+    const total = files.reduce((sum, [, time]) => sum + time, 0);
+    const chosen = files
+      .filter(([path]) => selection.mode === "full" || selected.has(path))
+      .reduce((sum, [, time]) => sum + time, 0);
+    return { selectedSeconds: Math.round(chosen), totalSeconds: Math.round(total) };
+  };
+  return { selection, failed, missed, unit: share("unit"), browser: share("browser") };
+};
+
 /** Changed files between two commits, renames as a deletion and an addition. */
 export const changesBetween = (base: string, head: string, cwd = process.cwd()): Change[] => {
   const output = execFileSync(
@@ -324,6 +369,10 @@ export const normalize = (
   };
   for (const raw of recorded) {
     const path = raw.replace(/\/+$/u, raw.endsWith("/") ? "/" : "").replace(/\/{2,}/gu, "/");
+    if (path.endsWith("/**")) {
+      if (trackedFolders.has(path.slice(0, -2))) folders.add(path);
+      continue;
+    }
     if (path.endsWith("/")) {
       if (trackedFolders.has(path)) folders.add(path);
       continue;
@@ -373,7 +422,7 @@ interface Partial {
 /** Runs one test file alone with the trace preload and returns what its processes recorded. */
 const runOne = async (root: string, suite: Suite, test: string, workers: number) => {
   const out = mkdtempSync(join(tmpdir(), "test-map-"));
-  const preload = fileURLToPath(new URL("./test-map-trace.ts", import.meta.url));
+  const preload = new URL("./test-map-trace.ts", import.meta.url).href;
   const args =
     suite === "unit"
       ? ["exec", "vitest", "run", test]
@@ -503,7 +552,16 @@ export const readMap = (
   } catch {
     return "the test map does not parse";
   }
-  if (map.version !== 1 || !Array.isArray(map.tests) || typeof map.sha !== "string")
+  const isRecord = (value: unknown) =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  if (
+    map.version !== 1 ||
+    typeof map.sha !== "string" ||
+    !Array.isArray(map.tests) ||
+    !Array.isArray(map.failed) ||
+    !isRecord(map.files) ||
+    !isRecord(map.folders)
+  )
     return "the test map has an unknown format";
   const ancestor = spawnSync("git", ["merge-base", "--is-ancestor", map.sha, base], { cwd });
   if (ancestor.status !== 0) return `the test map's commit ${map.sha} is not on the base's history`;
@@ -604,23 +662,11 @@ const main = async () => {
       process.stdout.write("The selection runs tests for every change beyond documentation.\n");
   } else if (command === "report") {
     const selection = JSON.parse(readFileSync(need("selection"), "utf8")) as Selection;
-    const read = positionals.map((path) => readResults(JSON.parse(readFileSync(path, "utf8"))));
-    const failed = [...new Set(read.flatMap((results) => results.failed))].toSorted();
-    const seconds: Record<string, number> = Object.assign(
-      {},
-      ...read.map((results) => results.seconds),
+    const report = compare(
+      selection,
+      positionals.map((path) => JSON.parse(readFileSync(path, "utf8")) as unknown),
     );
-    const selected = new Set([...selection.unit, ...selection.browser]);
-    const missed = selection.mode === "full" ? [] : failed.filter((test) => !selected.has(test));
-    const share = (suite: Suite) => {
-      const files = Object.entries(seconds).filter(([path]) => suiteOf(path) === suite);
-      const total = files.reduce((sum, [, time]) => sum + time, 0);
-      const chosen = files
-        .filter(([path]) => selection.mode === "full" || selected.has(path))
-        .reduce((sum, [, time]) => sum + time, 0);
-      return { selectedSeconds: Math.round(chosen), totalSeconds: Math.round(total) };
-    };
-    const report = { selection, failed, missed, unit: share("unit"), browser: share("browser") };
+    const { missed, failed } = report;
     writeFileSync(need("out"), `${JSON.stringify(report, null, 2)}\n`);
     const line =
       missed.length === 0

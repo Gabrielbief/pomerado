@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  compare,
   readResults,
   guard,
   jobInputs,
@@ -17,7 +18,7 @@ import {
 } from "../../../tools/test-map.js";
 
 const script = fileURLToPath(new URL("../../../tools/test-map.ts", import.meta.url));
-const preload = fileURLToPath(new URL("../../../tools/test-map-trace.ts", import.meta.url));
+const preload = new URL("../../../tools/test-map-trace.ts", import.meta.url).href;
 const directories: string[] = [];
 afterEach(() => {
   for (const directory of directories.splice(0))
@@ -147,6 +148,45 @@ describe("select", () => {
     ).toBe("full");
   });
 
+  it("runs everything for a new file only documentation or a bare word names", () => {
+    const files = new Set([...headFiles, "typescript/src/x.ts", "docs/guide.md"]);
+    // Documentation that mentions the file, and code that uses its name only as a word.
+    const head = {
+      "docs/guide.md": "See ./x.ts for details.",
+      "typescript/src/only-b.ts": "const x = 1; // x marks the spot",
+    };
+    const changes = [
+      added("typescript/src/x.ts"),
+      modified("docs/guide.md"),
+      modified("typescript/src/only-b.ts"),
+    ];
+    expect(pick(changes, { files, head }).mode).toBe("full");
+  });
+
+  it("counts a new or deleted file below a folder a test lists as a whole tree", () => {
+    const withTree: TestMap = { ...map, folders: { "typescript/authoring/": [2] } };
+    const tree: TestMap = { ...map, folders: { "typescript/authoring/**": [2] } };
+    const nested = "typescript/authoring/deep/nested/NEW.md";
+    // A listing of only the top folder doesn't show a file two folders down.
+    expect(pick([added(nested)], { map: withTree }).mode).toBe("full");
+    expect(pick([added(nested)], { map: tree })).toMatchObject({ mode: "selected", unit: [unitB] });
+    expect(pick([{ status: "deleted", path: nested }], { map: tree })).toMatchObject({
+      unit: [unitB],
+    });
+  });
+
+  it("treats a rename as a deletion and an addition, each with its own readers", () => {
+    const files = new Set([...headFiles, "typescript/authoring/core/RENAMED.md"]);
+    const selection = pick(
+      [
+        { status: "deleted", path: "typescript/src/only-b.ts" },
+        added("typescript/authoring/core/RENAMED.md"),
+      ],
+      { files },
+    );
+    expect(selection).toMatchObject({ mode: "selected", unit: [unitB], browser: [specC] });
+  });
+
   it("runs everything when a code change would otherwise run no test", () => {
     // The only test that read the file is deleted along with it.
     const files = new Set([unitA, specC, "typescript/src/shared.ts"]);
@@ -272,6 +312,29 @@ describe("map building", () => {
     });
   });
 
+  it("adds up a spec file's seconds across the shards that split it", () => {
+    const shard = (duration: number, ok: boolean) => ({
+      suites: [
+        {
+          file: "c.spec.ts",
+          specs: [{ ok, file: "c.spec.ts", tests: [{ results: [{ duration }] }] }],
+        },
+      ],
+    });
+    const selection = {
+      mode: "selected",
+      reasons: [],
+      mapSha: null,
+      unit: [],
+      browser: [],
+    } as const;
+    expect(compare(selection, [shard(1000, true), shard(3000, false)])).toMatchObject({
+      failed: [specC],
+      missed: [specC],
+      browser: { selectedSeconds: 0, totalSeconds: 4 },
+    });
+  });
+
   it("reads failed test files and their seconds from Vitest and Playwright results", () => {
     // The job that ran the tests may have had its checkout elsewhere than the reader's.
     const vitest = {
@@ -307,7 +370,7 @@ describe("map building", () => {
 });
 
 describe("trace preload", () => {
-  it("records modules, computed-path reads and a child's reads under a stripped environment", () => {
+  it("records what processes and threads load, read, list and copy, without changing results", () => {
     const root = temporary();
     const out = temporary();
     const write = (path: string, text: string) => {
@@ -315,28 +378,54 @@ describe("trace preload", () => {
       writeFileSync(join(root, path), text);
     };
     write("lib/imported.mjs", "export const value = 1;\n");
-    write("data/computed.txt", "text\n");
-    write("data/child.txt", "text\n");
-    write("data/listed/item.txt", "text\n");
-    write("data/held/inside.txt", "text\n");
-    write(
-      "child.mjs",
-      'import { readFileSync } from "node:fs";\nreadFileSync(new URL("./data/child.txt", import.meta.url));\n',
-    );
+    for (const path of [
+      "data/computed.txt",
+      "data/child.txt",
+      "data/worker.txt",
+      "data/listed/item.txt",
+      "data/tree/deep/item.txt",
+      "data/held/inside.txt",
+      "data/copied/deep/item.txt",
+    ])
+      write(path, "text\n");
+    const reading = (path: string) =>
+      `import { readFileSync } from "node:fs";\nreadFileSync(new URL("${path}", import.meta.url));\n`;
+    write("child.mjs", reading("./data/child.txt"));
+    write("worker.mjs", reading("./data/worker.txt"));
     write(
       "main.mjs",
-      [
-        'import { closeSync, openSync, readFileSync, readdirSync } from "node:fs";',
-        'import { spawnSync } from "node:child_process";',
-        'import { value } from "./lib/imported.mjs";',
-        'const name = ["comp", "uted"].join("");',
-        "readFileSync(new URL(`./data/${name}.txt`, import.meta.url));",
-        'readdirSync(new URL("./data/listed/", import.meta.url));',
-        // Scoped reads on Linux open a file below a held folder descriptor.
-        'if (process.platform === "linux") { const fd = openSync(new URL("./data/held/", import.meta.url), "r"); readFileSync(`/proc/self/fd/${fd}/inside.txt`); closeSync(fd); }',
-        'const child = spawnSync(process.execPath, [new URL("./child.mjs", import.meta.url).pathname], { env: { PATH: process.env.PATH } });',
-        "if (child.status !== 0 || value !== 1) process.exit(1);",
-      ].join("\n"),
+      `
+import { closeSync, cpSync, openSync, readFileSync, readdirSync } from "node:fs";
+import { execFile, spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import { Worker } from "node:worker_threads";
+import { value } from "./lib/imported.mjs";
+const here = (path) => new URL(path, import.meta.url);
+const name = ["comp", "uted"].join("");
+readFileSync(here(\`./data/\${name}.txt\`));
+readdirSync(here("./data/listed/"));
+readdirSync(here("./data/tree/"), { recursive: true });
+cpSync(here("./data/copied/"), join(tmpdir(), "test-map-copy-" + process.pid), { recursive: true });
+// Scoped reads on Linux open a file below a held folder descriptor.
+if (process.platform === "linux") {
+  const fd = openSync(here("./data/held/"), "r");
+  readFileSync(\`/proc/self/fd/\${fd}/inside.txt\`);
+  closeSync(fd);
+}
+const child = spawnSync(process.execPath, [here("./child.mjs").pathname], { env: { PATH: process.env.PATH } });
+await new Promise((done, fail) => {
+  const worker = new Worker(here("./worker.mjs"), { execArgv: [], env: {} });
+  worker.on("exit", done);
+  worker.on("error", fail);
+});
+// Results and errors stay as they are untraced.
+const echoed = await promisify(execFile)(process.execPath, ["-e", "process.stdout.write('hi')"]);
+let code;
+try { readFileSync("file://host/missing"); } catch (error) { code = error.code; }
+console.log(JSON.stringify({ status: child.status, value, stdout: echoed.stdout, code }));
+`,
     );
     const run = spawnSync(process.execPath, [join(root, "main.mjs")], {
       cwd: root,
@@ -349,6 +438,7 @@ describe("trace preload", () => {
       encoding: "utf8",
     });
     expect(run.status, run.stderr).toBe(0);
+    expect(JSON.parse(run.stdout)).toEqual({ status: 0, value: 1, stdout: "hi", code: "ENOENT" });
     const recorded = new Set(
       readdirSync(out).flatMap((file) => readFileSync(join(out, file), "utf8").split("\n")),
     );
@@ -357,8 +447,12 @@ describe("trace preload", () => {
       "lib/imported.mjs",
       "data/computed.txt",
       "data/listed/",
+      "data/tree/**",
+      "data/copied/deep/item.txt",
       "child.mjs",
       "data/child.txt",
+      "worker.mjs",
+      "data/worker.txt",
       ...(process.platform === "linux" ? ["data/held/inside.txt"] : []),
     ])
       expect(recorded).toContain(path);
@@ -368,8 +462,10 @@ describe("trace preload", () => {
 describe("select and guard commands", () => {
   it("select a change's tests from git, and guard rejects an empty selection for code", () => {
     const repo = temporary();
+    // The host's own git configuration, such as commit signing, stays out of the scenario.
+    const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
     const git = (...args: string[]) =>
-      execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+      execFileSync("git", args, { cwd: repo, encoding: "utf8", env: gitEnv }).trim();
     git("init", "-q", "-b", "main");
     git("config", "user.email", "test@example.com");
     git("config", "user.name", "Test");
@@ -426,7 +522,7 @@ describe("select and guard commands", () => {
     writeFileSync(join(repo, "foreign.json"), JSON.stringify(map));
     expect(readMap(join(repo, "foreign.json"), base, repo)).toContain("not on the base's history");
     const later = `@${Number(git("show", "-s", "--format=%ct", base)) + 4 * 86_400} +0000`;
-    const env = { ...process.env, GIT_COMMITTER_DATE: later };
+    const env = { ...gitEnv, GIT_COMMITTER_DATE: later };
     execFileSync("git", ["commit", "-q", "--allow-empty", "-m", "later"], { cwd: repo, env });
     expect(readMap(join(repo, "map.json"), git("rev-parse", "HEAD"), repo)).toContain("days older");
   });
