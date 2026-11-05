@@ -145,6 +145,7 @@ export const select = (
     ids.push(...(map.folders[`${dirname(path)}/`] ?? []));
     for (let folder = dirname(path); folder !== "."; folder = dirname(folder))
       ids.push(...(map.folders[`${folder}/**`] ?? []));
+    ids.push(...(map.folders["**"] ?? []));
     return ids;
   };
   /** Changed code files that name a new file by a relative path, such as "./helper.js". */
@@ -351,6 +352,10 @@ export const normalize = (
   };
   for (const raw of recorded) {
     const path = raw.replace(/\/+$/u, raw.endsWith("/") ? "/" : "").replace(/\/{2,}/gu, "/");
+    if (path === "**") {
+      folders.add(path);
+      continue;
+    }
     if (path.endsWith("/**")) {
       if (trackedFolders.has(path.slice(0, -2))) folders.add(path);
       continue;

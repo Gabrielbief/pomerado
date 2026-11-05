@@ -172,6 +172,11 @@ describe("select", () => {
     expect(pick([{ status: "deleted", path: nested }], { map: tree })).toMatchObject({
       unit: [unitB],
     });
+    const wholeRepository: TestMap = { ...map, folders: { "**": [1] } };
+    expect(pick([added("tools/new-tool.ts")], { map: wholeRepository })).toMatchObject({
+      mode: "selected",
+      unit: [unitA],
+    });
   });
 
   it("treats a rename as a deletion and an addition, each with its own readers", () => {
@@ -351,6 +356,7 @@ describe("trace preload", () => {
       "data/computed.txt",
       "data/child.txt",
       "data/worker.txt",
+      "data/echoed.txt",
       "data/listed/item.txt",
       "data/tree/deep/item.txt",
       "data/held/inside.txt",
@@ -361,6 +367,7 @@ describe("trace preload", () => {
       `import { readFileSync } from "node:fs";\nreadFileSync(new URL("${path}", import.meta.url));\n`;
     write("child.mjs", reading("./data/child.txt"));
     write("worker.mjs", reading("./data/worker.txt"));
+    write("echo.mjs", `${reading("./data/echoed.txt")}process.stdout.write("hi");\n`);
     write(
       "main.mjs",
       `
@@ -390,7 +397,8 @@ await new Promise((done, fail) => {
   worker.on("error", fail);
 });
 // Results and errors stay as they are untraced.
-const echoed = await promisify(execFile)(process.execPath, ["-e", "process.stdout.write('hi')"]);
+readdirSync(here("./"), { recursive: true });
+const echoed = await promisify(execFile)(process.execPath, [here("./echo.mjs").pathname], { env: { PATH: process.env.PATH } });
 let code;
 try { readFileSync("file://host/missing"); } catch (error) { code = error.code; }
 console.log(JSON.stringify({ status: child.status, value, stdout: echoed.stdout, code }));
@@ -422,6 +430,9 @@ console.log(JSON.stringify({ status: child.status, value, stdout: echoed.stdout,
       "data/child.txt",
       "worker.mjs",
       "data/worker.txt",
+      "echo.mjs",
+      "data/echoed.txt",
+      "**",
       ...(process.platform === "linux" ? ["data/held/inside.txt"] : []),
     ])
       expect(recorded).toContain(path);
