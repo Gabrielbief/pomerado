@@ -216,9 +216,10 @@ export const select = (
   };
 };
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&");
+
 /** A Playwright file filter, a regular expression, that matches one spec file and no other. */
-export const playwrightFilter = (path: string): string =>
-  `${`/${path}`.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&")}$`;
+export const playwrightFilter = (path: string): string => `${escapeRegExp(`/${path}`)}$`;
 
 /**
  * What the check and browser jobs run. They run a selection only when it is enforced; otherwise
