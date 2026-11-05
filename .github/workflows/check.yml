@@ -9,9 +9,10 @@
 #   CI_RUNNER_TRUSTED variable names. The check job, which builds the tarball release publishes,
 #   runs on a GitHub-hosted runner. A merge queue needs its own trigger and route here first.
 # A runner either variable names must have 4 vCPUs, as the browser job's --workers=4 expects.
-# An unset variable falls back to a Blacksmith runner. The scans and the `CI` job are short and
-# always run on GitHub-hosted runners. typescript/tests/unit/ci-runner-routing.test.ts checks these
-# routes for forks, outside authors, maintainers and pushes.
+# An unset variable falls back to a Blacksmith runner. The scans, test selection's shadow jobs and
+# the `CI` job are short and always run on GitHub-hosted runners.
+# typescript/tests/unit/ci-runner-routing.test.ts checks these routes for forks, outside authors,
+# maintainers and pushes.
 # This routing is not a security boundary: a fork's pull request runs its own copy of this file, so
 # it can name any runner. Every outside contributor's runs wait for a maintainer, who checks
 # workflow edits first. A self-hosted runner must also refuse, on its own side, any job its route
@@ -265,10 +266,7 @@ jobs:
   test-selection:
     name: Test selection (shadow)
     if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
-    runs-on: >-
-      ${{ github.repository == 'Pomerado/pomerado'
-      && github.event.pull_request.head.repo.full_name == github.repository
-      && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -311,10 +309,7 @@ jobs:
     name: Test selection report (shadow)
     needs: [test-selection, check, browser]
     if: always() && needs.test-selection.result == 'success'
-    runs-on: >-
-      ${{ github.repository == 'Pomerado/pomerado'
-      && github.event.pull_request.head.repo.full_name == github.repository
-      && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
