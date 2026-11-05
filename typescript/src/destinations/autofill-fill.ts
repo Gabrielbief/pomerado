@@ -442,7 +442,9 @@ interface FillInput extends CallInput {
   /**
    * How each value is typed; `paste` by default. `keyboard` presses a trusted key per character
    * (`InsertionOptions.trustedKeys`), the retype below included, for every slot but the
-   * `pastedSlots`: a one-time code too, one key into each box of a code split across boxes.
+   * `pastedSlots`: a one-time code too, one key into each box of a code split across boxes. A
+   * step's one code field that hands the focus on once a key went in gets the code at once instead
+   * (`codeAtOnce`).
    */
   readonly typing?: CredentialTypingMode;
 }
@@ -904,8 +906,48 @@ const untypedRefusal = (
 };
 
 /**
+ * Whether the code typed by trusted keys into the step's one code field was refused because the
+ * page moved the focus on from it (`codeAtOnce`), as a row of one-character boxes does from its
+ * first box once a key went in, when the step names only that box. A row the step names box by
+ * box, any other slot and any other refusal are not.
+ */
+const focusLeftCodeField = (input: FillInput, index: number, insertion: InsertionRefusal) =>
+  insertion === "focus_moved" &&
+  input.typing === "keyboard" &&
+  input.step.fields[index]?.slot === "code" &&
+  input.step.fields.filter((field) => field.slot === "code").length === 1 &&
+  Array.from(input.values[index] ?? "").length > 1;
+
+/**
+ * The step's one code field, whose page moved the focus on once a trusted key went in
+ * (`focusLeftCodeField`), gets the whole code inserted at once, as before codes were typed: a
+ * focus call binds the field again, with every check a field's own focus call makes, after it
+ * found the field holds what the keys typed (`check`), and empties it; the host then inserts the
+ * code atomically (`insertAtOnce`), guarded as it always was. `untyped` when the field holds
+ * nothing, so no key went in and the refusal stands. Otherwise what that call and insertion found,
+ * as for any field.
+ */
+const codeAtOnce = (
+  input: FillInput,
+  progress: FillProgress,
+  index: number,
+): Effect.Effect<AutofillStepReport | undefined | "untyped"> =>
+  Effect.gen(function* () {
+    const bindingKey = `__pomerado_autofill_${randomUUID()}`;
+    progress.check = [index];
+    const answered = yield* fillCall(input, progress)({ kind: "focus", index, bindingKey });
+    progress.check = [];
+    if (answered._tag === "Left") return failedCall(progress, answered.left, { mayMutate: false });
+    const answer = answered.right;
+    if ("checked" in answer) return "untyped";
+    if ("refusal" in answer) return stopped(input.step, progress, answer, "field");
+    return yield* afterFieldCall(input, progress, index, answer, bindingKey, undefined, true);
+  });
+
+/**
  * What a field's own call found: a date filled, a box kept as an earlier screen typed it, or a
  * focused field the host now types. A typed identifier joins the sign-in's record under `mark`.
+ * `atOnce` inserts the value at once whatever the typing (`codeAtOnce`).
  */
 const afterFieldCall = (
   input: FillInput,
@@ -914,6 +956,7 @@ const afterFieldCall = (
   answer: Exclude<CallAnswer, Stop | { readonly checked: false }>,
   bindingKey: string,
   mark: string | undefined,
+  atOnce = false,
 ): Effect.Effect<AutofillStepReport | undefined> =>
   Effect.gen(function* () {
     if ("kept" in answer) {
@@ -948,7 +991,9 @@ const afterFieldCall = (
           value,
           {
             ...(slot === "phone" ? { phone: true } : {}),
-            ...(input.typing === "keyboard" && !pastedSlots.has(slot) ? { trustedKeys: true } : {}),
+            ...(input.typing === "keyboard" && !pastedSlots.has(slot) && !atOnce
+              ? { trustedKeys: true }
+              : {}),
           },
         ),
       );
@@ -996,6 +1041,10 @@ const afterFieldCall = (
         return typing.right === "changed" ? report : cutShortAt(report, index);
       }
       insertion = typing.right;
+      if (!atOnce && focusLeftCodeField(input, index, insertion)) {
+        const inserted = yield* codeAtOnce(input, progress, index);
+        if (inserted !== "untyped") return inserted;
+      }
     }
     const refusal = untypedRefusal(input, progress, index, answer, insertion);
     if (!progress.typed) return refusal;
@@ -1009,7 +1058,8 @@ const afterFieldCall = (
  * focus and bind each field and click; the host inserts each value atomically into that original
  * node over its own encrypted DevTools socket (`keyboard`), or with `typing: "keyboard"` presses a
  * trusted key per character into it there for each slot but the `pastedSlots`, a one-time code
- * included, one key per box of a code split across boxes, so no value but a
+ * included, one key per box of a code split across boxes, and inserts at once a code whose one
+ * field hands the focus on once a key went in, binding that field again first (`codeAtOnce`), so no value but a
  * date of birth ever enters a Kernel call's script text or its request to Kernel's REST API. It reports per-field outcomes and never a
  * value. Once anything was typed, a call that fails or finds a control refused can no longer say
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
