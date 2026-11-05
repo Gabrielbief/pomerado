@@ -52,8 +52,11 @@ if (out !== undefined && out !== "" && root !== undefined && root !== "") {
       const below = /^\/proc\/self\/fd\/(\d+)(\/.*)?$/u.exec(absolute);
       if (below !== null)
         absolute = resolve(readlink(`/proc/self/fd/${below[1] ?? ""}`) + (below[2] ?? ""));
-      if (!absolute.startsWith(prefix)) return;
-      const suffix = kind === "dir" ? "/" : kind === "tree" ? "/**" : "";
+      // A listing of the root itself is recorded only as the whole tree, `**`.
+      if (`${absolute}/` === prefix && kind === "tree") absolute = `${absolute}/**`;
+      else if (!absolute.startsWith(prefix)) return;
+      const suffix =
+        kind === "dir" ? "/" : kind === "tree" && !absolute.endsWith("/**") ? "/**" : "";
       const relative = absolute.slice(prefix.length) + suffix;
       if (relative.startsWith("node_modules/") || relative.includes("/node_modules/")) return;
       if (seen.has(relative)) return;
@@ -79,7 +82,8 @@ if (out !== undefined && out !== "" && root !== undefined && root !== "") {
       string | symbol,
       PropertyDescriptor
     >;
-    for (const key of ["length", "name", "prototype"]) delete properties[key];
+    // Node's own promisified form calls the original directly, so a wrapper sets its own.
+    for (const key of ["length", "name", "prototype", promisify.custom]) delete properties[key];
     Object.defineProperties(wrapped, properties);
     target[name] = wrapped;
   };
@@ -175,13 +179,11 @@ if (out !== undefined && out !== "" && root !== undefined && root !== "") {
     // exec and execFile promisify to { stdout, stderr } through their own custom form.
     const custom = Reflect.get(original, promisify.custom) as Callable | undefined;
     if (typeof custom === "function")
-      Reflect.set(
-        childProcesses[name] as object,
-        promisify.custom,
-        function (this: unknown, ...args: unknown[]) {
+      Object.defineProperty(childProcesses[name], promisify.custom, {
+        value: function (this: unknown, ...args: unknown[]) {
           return Reflect.apply(custom, this, withTracing(args));
         },
-      );
+      });
   }
 
   // A worker thread given its own execArgv or environment still loads this preload.

@@ -19,6 +19,7 @@ import {
 
 const script = fileURLToPath(new URL("../../../tools/test-map.ts", import.meta.url));
 const preload = new URL("../../../tools/test-map-trace.ts", import.meta.url).href;
+const selectScript = fileURLToPath(new URL("../../../tools/test-map-select.sh", import.meta.url));
 const directories: string[] = [];
 afterEach(() => {
   for (const directory of directories.splice(0))
@@ -99,6 +100,7 @@ describe("select", () => {
       "vitest.config.ts",
       ".github/workflows/check.yml",
       "tools/test-map-trace.ts",
+      "tools/test-map-select.sh",
     ])
       expect(pick([modified(path)]).mode).toBe("full");
     expect(pick([modified("typescript/src/only-b.ts")], { map: undefined }).mode).toBe("full");
@@ -172,6 +174,11 @@ describe("select", () => {
     expect(pick([added(nested)], { map: tree })).toMatchObject({ mode: "selected", unit: [unitB] });
     expect(pick([{ status: "deleted", path: nested }], { map: tree })).toMatchObject({
       unit: [unitB],
+    });
+    const wholeRepository: TestMap = { ...map, folders: { "**": [1] } };
+    expect(pick([added("tools/new-tool.ts")], { map: wholeRepository })).toMatchObject({
+      mode: "selected",
+      unit: [unitA],
     });
   });
 
@@ -382,6 +389,7 @@ describe("trace preload", () => {
       "data/computed.txt",
       "data/child.txt",
       "data/worker.txt",
+      "data/echoed.txt",
       "data/listed/item.txt",
       "data/tree/deep/item.txt",
       "data/held/inside.txt",
@@ -392,6 +400,7 @@ describe("trace preload", () => {
       `import { readFileSync } from "node:fs";\nreadFileSync(new URL("${path}", import.meta.url));\n`;
     write("child.mjs", reading("./data/child.txt"));
     write("worker.mjs", reading("./data/worker.txt"));
+    write("echo.mjs", `${reading("./data/echoed.txt")}process.stdout.write("hi");\n`);
     write(
       "main.mjs",
       `
@@ -421,7 +430,8 @@ await new Promise((done, fail) => {
   worker.on("error", fail);
 });
 // Results and errors stay as they are untraced.
-const echoed = await promisify(execFile)(process.execPath, ["-e", "process.stdout.write('hi')"]);
+readdirSync(here("./"), { recursive: true });
+const echoed = await promisify(execFile)(process.execPath, [here("./echo.mjs").pathname], { env: { PATH: process.env.PATH } });
 let code;
 try { readFileSync("file://host/missing"); } catch (error) { code = error.code; }
 console.log(JSON.stringify({ status: child.status, value, stdout: echoed.stdout, code }));
@@ -453,6 +463,9 @@ console.log(JSON.stringify({ status: child.status, value, stdout: echoed.stdout,
       "data/child.txt",
       "worker.mjs",
       "data/worker.txt",
+      "echo.mjs",
+      "data/echoed.txt",
+      "**",
       ...(process.platform === "linux" ? ["data/held/inside.txt"] : []),
     ])
       expect(recorded).toContain(path);
@@ -488,23 +501,40 @@ describe("select and guard commands", () => {
         env: { PATH: process.env["PATH"] ?? "" },
       });
 
-    const chosen = cli(
-      "select",
-      "--map",
-      "map.json",
-      "--base",
-      base,
-      "--head",
-      head,
-      "--out",
-      "selection.json",
+    // The workflow's script downloads the newest map through gh, selects and guards; a stand-in
+    // gh serves the map. Enforced, it hands the test jobs the selection as step outputs.
+    const bin = temporary();
+    writeFileSync(
+      join(bin, "gh"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = api ]; then echo 42; exit; fi',
+        'while [ $# -gt 0 ]; do if [ "$1" = -D ]; then dir="$2"; fi; shift; done',
+        'mkdir -p "$dir" && cp "$MAP" "$dir/test-map.json"',
+      ].join("\n"),
+      { mode: 0o755 },
     );
-    expect(chosen.status, chosen.stderr).toBe(0);
+    const outputs = join(repo, "outputs.txt");
+    const selected = spawnSync("bash", [selectScript, repo], {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+        MAP: join(repo, "map.json"),
+        REPO: "example-org/example-repo",
+        BASE: base,
+        HEAD: head,
+        ENFORCE: "true",
+        GITHUB_OUTPUT: outputs,
+      },
+    });
+    expect(selected.status, selected.stderr).toBe(0);
     expect(JSON.parse(readFileSync(join(repo, "selection.json"), "utf8"))).toMatchObject({
       mode: "selected",
       unit: [unitB],
       browser: [],
     });
+    expect(readFileSync(outputs, "utf8")).toContain(`run=selected\nunit=["${unitB}"]\nbrowser=[]`);
     expect(
       cli("guard", "--selection", "selection.json", "--base", base, "--head", head).status,
     ).toBe(0);

@@ -8,9 +8,10 @@
 # - On a push to main, through the release workflow, the browser jobs use the runner the
 #   CI_RUNNER_TRUSTED variable names. The check job, which builds the tarball release publishes,
 #   runs on a GitHub-hosted runner. A merge queue needs its own trigger and route here first.
-# A runner either variable names must have 4 vCPUs, as the browser job's --workers=4 expects.
-# An unset variable falls back to a Blacksmith runner. The scans, test selection's jobs and the
-# `CI` job are short and always run on GitHub-hosted runners.
+# A runner either variable names must have 4 vCPUs, as the browser job's --workers=4 and the
+# browser plan's --workers 4 expect.
+# An unset variable falls back to a Blacksmith runner. The scans, test selection's shadow jobs and
+# the `CI` job are short and always run on GitHub-hosted runners.
 # typescript/tests/unit/ci-runner-routing.test.ts checks these routes for forks, outside authors,
 # maintainers and pushes.
 # This routing is not a security boundary: a fork's pull request runs its own copy of this file, so
@@ -20,7 +21,8 @@
 # Approved outside code can still reach a non-GitHub runner, and release publishes the tarball the
 # check job builds, so no job here restores a cache: setup-node's package manager cache is off, and
 # nothing uses actions/cache or a Blacksmith sticky disk. Publish runs on a GitHub-hosted runner,
-# which npm provenance needs.
+# which npm provenance needs. The browser plan reads test durations that Release runs on main
+# record, and they decide only how the tests are split across shards, never what is built or run.
 name: Check
 on:
   # Pushes to main run this through the release workflow, which publishes the tarball it tests.
@@ -42,6 +44,14 @@ on:
         value: ${{ jobs.check.outputs.package-sha256 }}
 permissions:
   contents: read
+# Whether this run selects its tests (see the test-selection job): only a pull request, only while
+# the repository variable TEST_SELECTION_ENFORCE is `true`, and never with TEST_SELECTION_DISABLED
+# or the `ci:full` label.
+env:
+  SELECT_TESTS: >-
+    ${{ github.event_name == 'pull_request' && vars.TEST_SELECTION_ENFORCE == 'true'
+    && vars.TEST_SELECTION_DISABLED != 'true'
+    && !contains(github.event.pull_request.labels.*.name, 'ci:full') }}
 jobs:
   # Secret scan with gitleaks and .gitleaks.toml. Every event scans the checked-out tree. A pull
   # request also scans the diff of each of its commits, and a push to main of each pushed commit.
@@ -109,7 +119,6 @@ jobs:
   # On a push to main it builds the tarball the release workflow publishes, so there it runs on a
   # GitHub-hosted runner, a fresh machine, never on CI_RUNNER_TRUSTED.
   check:
-    needs: [test-selection]
     runs-on: >-
       ${{ github.repository == 'Pomerado/pomerado' && github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
@@ -118,11 +127,17 @@ jobs:
       && (vars.CI_RUNNER_MAINTAINER || 'blacksmith-4vcpu-ubuntu-2404')
       || 'ubuntu-latest' }}
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     outputs:
       package-artifact-id: ${{ steps.package.outputs.artifact-id }}
       package-sha256: ${{ steps.package-digest.outputs.sha256 }}
     steps:
+      # Enforced test selection compares the pull request with its base, so it needs the history.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ env.SELECT_TESTS == 'true' && '0' || '1' }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.22.1
@@ -136,31 +151,68 @@ jobs:
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm typecheck
       - run: corepack pnpm build
-      # Every unit test, or only the selected ones while selection is enforced on a pull request.
+      # While test selection is enforced on a pull request (see the test-selection job), only the
+      # selected unit test files run. Everything else here always runs.
+      - name: Select unit tests
+        id: select
+        if: env.SELECT_TESTS == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          ENFORCE: "true"
+        run: bash tools/test-map-select.sh "$RUNNER_TEMP/selection"
       # The JSON results feed test selection's report on pull requests.
       - name: Unit tests
         shell: bash
         env:
-          RUN: ${{ needs.test-selection.outputs.run }}
-          UNIT: ${{ needs.test-selection.outputs.unit }}
+          RUN: ${{ steps.select.outputs.run || 'full' }}
+          UNIT: ${{ steps.select.outputs.unit || '[]' }}
         run: |
           results=(--reporter=default --reporter=json --outputFile.json=test-results/unit-results.json)
           if [ "$RUN" != selected ]; then
             corepack pnpm test "${results[@]}"
             exit
           fi
-          mapfile -t files < <(node -e 'for (const file of JSON.parse(process.env.UNIT)) console.log(file)')
-          if [ "${#files[@]}" -eq 0 ]; then
-            node tools/check-host-protocol.ts
+          # A failure to read the list fails the step rather than running fewer tests.
+          files_json=$(node -e 'for (const file of JSON.parse(process.env.UNIT)) console.log(file)')
+          if [ -z "$files_json" ]; then
+            # The test script's checks still run; Vitest finds no test file under this filter.
             echo "Test selection chose no unit test file."
+            corepack pnpm test --passWithNoTests __no_selected_unit_test__
           else
+            mapfile -t files <<<"$files_json"
             corepack pnpm test "${results[@]}" "${files[@]}"
           fi
+      # Pack, hash and upload the tarball before anything installs packages without a lockfile. The
+      # validation below installs its consumer's dependencies fresh from the registry, so the bytes
+      # release publishes, which it checks against this hash, are fixed before that code runs.
+      - name: Pack the package
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/pomerado-artifact"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/pomerado-artifact"
+      - name: Record the tarball's SHA-256
+        id: package-digest
+        shell: bash
+        run: |
+          shopt -s nullglob
+          tarballs=("$RUNNER_TEMP"/pomerado-artifact/*.tgz)
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "::error::Expected one packed tarball. Found ${#tarballs[@]}."
+            exit 1
+          fi
+          echo "sha256=$(sha256sum "${tarballs[0]}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        id: package
+        with:
+          name: pomerado-package
+          path: ${{ runner.temp }}/pomerado-artifact/*.tgz
       - name: Validate packed package outside the checkout
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/pomerado-artifact" "$RUNNER_TEMP/pomerado-consumer"
-          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/pomerado-artifact"
+          mkdir -p "$RUNNER_TEMP/pomerado-consumer"
           cd "$RUNNER_TEMP/pomerado-consumer"
           npm init -y
           npm install --ignore-scripts "$RUNNER_TEMP/pomerado-artifact/"*.tgz @types/node@24.13.4 vitest@5.0.2
@@ -200,22 +252,6 @@ jobs:
           void expectFailure;
           TS
           "$GITHUB_WORKSPACE/node_modules/.bin/tsc" --noEmit --strict --skipLibCheck --target ES2024 --module NodeNext --moduleResolution NodeNext consumer.mts
-      - name: Record the tarball's SHA-256
-        id: package-digest
-        shell: bash
-        run: |
-          shopt -s nullglob
-          tarballs=("$RUNNER_TEMP"/pomerado-artifact/*.tgz)
-          if [ "${#tarballs[@]}" -ne 1 ]; then
-            echo "::error::Expected one packed tarball. Found ${#tarballs[@]}."
-            exit 1
-          fi
-          echo "sha256=$(sha256sum "${tarballs[0]}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        id: package
-        with:
-          name: pomerado-package
-          path: ${{ runner.temp }}/pomerado-artifact/*.tgz
       - if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -223,12 +259,112 @@ jobs:
           path: test-results/unit-results.json
           retention-days: 7
           if-no-files-found: ignore
-  # The browser tests, split by test across parallel shards. fullyParallel in playwright.config.ts
-  # lets Playwright give each shard an equal number of tests. Each shard builds dist/ itself, since
-  # the tests run the built package. Every shard runs to the end, so one run reports every failure.
+  # Splits the browser tests into shards of about equal duration. tools/browser-shards.ts plans them
+  # from each test's duration in the latest successful Release run on main, which the browser job
+  # records there, and picks the shard count that keeps each shard near the target. The durations
+  # only weigh the split: every listed test runs, and each shard fails when a test it was given
+  # reports no result. Without durations, the plan splits by test count. The token reads the
+  # Release run's artifacts, which only pushes to main write. The plan is short and runs on a
+  # GitHub-hosted runner, like the scans.
+  browser-plan:
+    name: Plan browser shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+      none: ${{ steps.plan.outputs.none }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: ${{ env.SELECT_TESTS == 'true' && '0' || '1' }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.22.1
+          package-manager-cache: false
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - name: Find the latest recorded durations
+        id: durations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          run_id="$(gh api "repos/$REPOSITORY/actions/workflows/release.yml/runs?branch=main&event=push&status=success&per_page=1" \
+            --jq '.workflow_runs[0].id // empty')" || run_id=""
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.durations.outputs.run-id != ''
+        continue-on-error: true
+        with:
+          pattern: browser-durations-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/browser-durations
+          run-id: ${{ steps.durations.outputs.run-id }}
+          github-token: ${{ github.token }}
+      # While test selection is enforced on a pull request (see the test-selection job), only the
+      # selected spec files are planned, and each planned test must still report a result.
+      - name: Select browser tests
+        id: select
+        if: env.SELECT_TESTS == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          ENFORCE: "true"
+        run: bash tools/test-map-select.sh "$RUNNER_TEMP/selection"
+      - name: List the browser tests
+        id: list
+        env:
+          RUN: ${{ steps.select.outputs.run || 'full' }}
+          BROWSER: ${{ steps.select.outputs.browser || '[]' }}
+        run: |
+          if [ "$RUN" != selected ]; then
+            corepack pnpm exec playwright test --list --reporter=json > "$RUNNER_TEMP/browser-tests.json"
+            exit
+          fi
+          filters_json=$(node -e 'for (const filter of JSON.parse(process.env.BROWSER)) console.log(filter)')
+          if [ -z "$filters_json" ]; then
+            echo "Test selection chose no browser test file."
+            echo "none=true" >> "$GITHUB_OUTPUT"
+            exit
+          fi
+          mapfile -t filters <<<"$filters_json"
+          corepack pnpm exec playwright test --list --reporter=json "${filters[@]}" > "$RUNNER_TEMP/browser-tests.json"
+      - name: Plan the shards
+        id: plan
+        env:
+          NONE: ${{ steps.list.outputs.none }}
+        run: |
+          if [ "$NONE" = true ]; then
+            echo "none=true" >> "$GITHUB_OUTPUT"
+            echo "shards=[1]" >> "$GITHUB_OUTPUT"
+            mkdir -p "$RUNNER_TEMP/browser-shards"
+            exit
+          fi
+          node tools/browser-shards.ts plan --tests "$RUNNER_TEMP/browser-tests.json" \
+            --durations "$RUNNER_TEMP/browser-durations" --out "$RUNNER_TEMP/browser-shards" \
+            --target-seconds 80 --workers 4 --max-shards 16
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-shards
+          path: ${{ runner.temp }}/browser-shards/
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: ignore
+  # The browser tests, in the planned shards. Each shard builds dist/ itself, since the tests run the
+  # built package. Every shard runs to the end, so one run reports every failure. A push to main
+  # records each test's duration for the next plans.
   browser:
     name: Browser tests (${{ matrix.shard }}/${{ strategy.job-total }})
-    needs: [test-selection]
+    needs: browser-plan
+    # The plan has no browser test only when enforced test selection chose none; CI then accepts
+    # this job as skipped.
+    if: needs.browser-plan.outputs.none != 'true'
     runs-on: >-
       ${{ github.repository == 'Pomerado/pomerado'
       && github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -243,7 +379,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: ${{ fromJSON(needs.browser-plan.outputs.shards) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -255,28 +391,13 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: npm pkg set version="$VERSION"
-      # A shard has nothing to do when selection is enforced and chose no browser test file.
-      - name: Check for selected browser tests
-        id: chosen
-        env:
-          RUN: ${{ needs.test-selection.outputs.run }}
-          BROWSER: ${{ needs.test-selection.outputs.browser }}
-        run: |
-          if [ "$RUN" = selected ] && [ "$BROWSER" = "[]" ]; then
-            echo "none=true" >> "$GITHUB_OUTPUT"
-            echo "Test selection chose no browser test file."
-          fi
-      - if: steps.chosen.outputs.none != 'true'
-        run: corepack enable
-      - if: steps.chosen.outputs.none != 'true'
-        run: corepack pnpm install --frozen-lockfile
-      - if: steps.chosen.outputs.none != 'true'
-        run: corepack pnpm build
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm build
       # A runner that can't install packages, neither as root nor through sudo, must already hold
       # Chromium's system libraries, as a self-hosted runner's image does, so only Chromium itself
       # is installed there.
       - name: Install Chromium
-        if: steps.chosen.outputs.none != 'true'
         shell: bash
         run: |
           if [ "$(id -u)" = 0 ] || sudo -n true 2>/dev/null; then
@@ -284,22 +405,25 @@ jobs:
           else
             corepack pnpm exec playwright install chromium
           fi
-      # One worker per vCPU. Every runner this job uses has 4 vCPUs. While selection is enforced,
-      # each spec file it chose is a Playwright file filter, and a shard left with no test passes.
-      - name: Browser tests
-        if: steps.chosen.outputs.none != 'true'
-        shell: bash
-        env:
-          RUN: ${{ needs.test-selection.outputs.run }}
-          BROWSER: ${{ needs.test-selection.outputs.browser }}
-          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
-        run: |
-          filters=()
-          if [ "$RUN" = selected ]; then
-            mapfile -t filters < <(node -e 'for (const filter of JSON.parse(process.env.BROWSER)) console.log(filter)')
-            filters+=(--pass-with-no-tests)
-          fi
-          corepack pnpm test:browser "${filters[@]}" --shard="$SHARD" --workers=4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: browser-shards
+          path: ${{ runner.temp }}/browser-shards
+      # One worker per vCPU. Every runner this job uses has 4 vCPUs, as the plan assumes.
+      - run: corepack pnpm test:browser --test-list "$RUNNER_TEMP/browser-shards/shard-${{ matrix.shard }}.txt" --workers=4
+      - name: Check that every planned test ran within the time budget
+        run: >-
+          mkdir -p "$RUNNER_TEMP/browser-durations" &&
+          node tools/browser-shards.ts record --results test-results/browser-results.json
+          --expected "$RUNNER_TEMP/browser-shards/shard-${{ matrix.shard }}.json"
+          --out "$RUNNER_TEMP/browser-durations/durations-${{ matrix.shard }}.json" --budget-seconds 80
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name == 'push'
+        with:
+          name: browser-durations-${{ matrix.shard }}
+          path: ${{ runner.temp }}/browser-durations/durations-${{ matrix.shard }}.json
+          retention-days: 30
+          overwrite: true
       - if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -307,80 +431,48 @@ jobs:
           path: test-results/browser-results.json
           retention-days: 7
           if-no-files-found: ignore
-  # Test selection (tools/test-map.ts). On a pull request it works out which test files the change
-  # needs, from the newest test map main's test-map.yml built; a pull request never builds a map.
-  # Only while the repository variable TEST_SELECTION_ENFORCE is `true` do the check and browser
-  # jobs run just those files, and the guard then fails a run whose selection tests nothing for a
-  # change beyond documentation. Otherwise every test runs and the selection is only recorded.
-  # Pushes to main always run every test, as does a pull request labelled `ci:full`, from its next
-  # push, since a re-run keeps the labels of the run it repeats. TEST_SELECTION_DISABLED=true turns
-  # selection off.
-  # The report job compares the selection with the results and never decides a run.
+  # Test selection (tools/test-map.ts). On every pull request this job records which test files
+  # the change needs, from the newest test map main's test-map.yml built, and the report job
+  # compares that with the results. Neither job is in CI's `needs`, so recording never decides a
+  # run. Only while the repository variable TEST_SELECTION_ENFORCE is `true` do the check job and
+  # the browser plan select the same way themselves and run only those test files; their guard then
+  # fails a run whose selection tests nothing for a change beyond documentation. Pushes to main
+  # always run every test, as does a pull request labelled `ci:full`, from its next push, since a
+  # re-run keeps the labels of the run it repeats. TEST_SELECTION_DISABLED=true turns it all off.
+  # A pull request never builds a map; tools/test-map-select.sh reads it from a trusted run.
   test-selection:
-    name: Test selection
+    name: Test selection (shadow)
+    if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       actions: read
-    outputs:
-      run: ${{ steps.select.outputs.run || 'full' }}
-      unit: ${{ steps.select.outputs.unit || '[]' }}
-      browser: ${{ steps.select.outputs.browser || '[]' }}
     steps:
-      - if: github.event_name != 'pull_request' || vars.TEST_SELECTION_DISABLED == 'true'
-        run: echo "Every test runs."
-      - if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.22.1
           package-manager-cache: false
-      # No map, or one that can't be read, selects everything. Only a scheduled or dispatched run
-      # on this repository's main counts; a pull request's own copy of test-map.yml never does.
-      - name: Download the newest test map from main
-        if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
+      - name: Select tests
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-        run: |
-          newest=$(gh api "repos/$REPO/actions/workflows/test-map.yml/runs?branch=main&status=success&per_page=30" \
-            --jq "[.workflow_runs[] | select((.event == \"schedule\" or .event == \"workflow_dispatch\")
-              and .head_repository.full_name == \"$REPO\")][0].id // empty" || true)
-          if [ -n "$newest" ]; then
-            gh run download "$newest" -R "$REPO" -n test-map -D "$RUNNER_TEMP/map" || echo "::warning::Could not download the test map"
-          fi
-      - name: Select tests
-        id: select
-        if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
-        env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-          ENFORCE: ${{ vars.TEST_SELECTION_ENFORCE == 'true' && !contains(github.event.pull_request.labels.*.name, 'ci:full') }}
-        run: |
-          if [ "$ENFORCE" = true ]; then
-            node tools/test-map.ts select --enforce --map "$RUNNER_TEMP/map/test-map.json" --base "$BASE" --head "$HEAD" --out selection.json
-            node tools/test-map.ts guard --selection selection.json --base "$BASE" --head "$HEAD"
-          else
-            node tools/test-map.ts select --map "$RUNNER_TEMP/map/test-map.json" --base "$BASE" --head "$HEAD" --out selection.json
-            node tools/test-map.ts guard --warn --selection selection.json --base "$BASE" --head "$HEAD"
-          fi
-      - if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        run: bash tools/test-map-select.sh .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-selection
           path: selection.json
           retention-days: 30
   test-selection-report:
-    name: Test selection report
+    name: Test selection report (shadow)
     needs: [test-selection, check, browser]
-    if: >-
-      always() && github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
-      && needs.test-selection.result == 'success'
+    if: always() && needs.test-selection.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -410,11 +502,11 @@ jobs:
           retention-days: 30
   # `CI` is one status for the whole run. It fails unless every job it needs succeeded, so a
   # skipped or cancelled job never passes for a green one. Add every new job to `needs`, except
-  # test selection's report, which never decides a run.
+  # test selection's shadow jobs, which never decide a run.
   ci:
     name: CI
     if: always()
-    needs: [test-selection, check, browser, secret-scan, content-scan]
+    needs: [check, browser-plan, browser, secret-scan, content-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -434,8 +526,14 @@ jobs:
       - name: Require every job to succeed
         env:
           NEEDS: ${{ toJSON(needs) }}
+          NO_BROWSER_TESTS: ${{ needs.browser-plan.result == 'success' && needs.browser-plan.outputs.none == 'true' }}
         run: |
-          failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
+          # The browser job counts as passed when skipped only because the plan, which succeeded,
+          # held no browser test.
+          failed=$(jq -r --arg none "$NO_BROWSER_TESTS" 'to_entries[]
+            | select(.value.result != "success")
+            | select(.key != "browser" or .value.result != "skipped" or $none != "true")
+            | "\(.key): \(.value.result)"' <<<"$NEEDS")
           if [ -n "$failed" ]; then
             echo "::error::Jobs that didn't succeed: ${failed//$'\n'/, }"
             exit 1
