@@ -16,13 +16,14 @@
  *   documentation.
  *
  * Changed and new test files always run, as do test files whose map run failed, since a test that
- * stopped partway has no record of what it would have read next.
+ * stopped partway has no record of what it would have read next. So do the tests that reach what
+ * changed on the base after the map was built, since the map can't know what those changes read.
  *
  * Usage:
  *   node tools/test-map.ts run --suite unit|browser [--shard k/n] --out partial.json
  *   node tools/test-map.ts merge --sha SHA --out test-map.json partial.json...
  *   node tools/test-map.ts select --base SHA --head SHA --out selection.json [--map test-map.json]
- *     [--enforce]
+ *     [--tested SHA] [--enforce]
  *   node tools/test-map.ts guard --base SHA --head SHA --selection selection.json [--warn]
  *   node tools/test-map.ts report --selection selection.json --out report.json results.json...
  */
@@ -117,6 +118,7 @@ export const select = (
   changes: readonly Change[],
   headFiles: ReadonlySet<string>,
   readHead: (path: string) => string,
+  drift: readonly Change[] = [],
 ): Selection => {
   const full = (reasons: readonly string[]): Selection => ({
     mode: "full",
@@ -208,6 +210,23 @@ export const select = (
   for (const test of [...chosen]) if (!headFiles.has(test)) chosen.delete(test);
   if (chosen.size === 0 && substantive)
     return full(["the selection was empty for a change to more than documentation"]);
+  // The tested tree also holds what reached the base after the map was built, which the map
+  // knows nothing about: its tests, and the readers of what it changed, run too. Main ran every
+  // test on it, so its changes count only for the tests they reach.
+  const drifted = new Set<string>();
+  for (const change of drift) {
+    if (suiteOf(change.path) !== undefined) drifted.add(change.path);
+    for (const id of readersOf(change)) {
+      const test = map.tests[id];
+      if (test !== undefined) drifted.add(test);
+    }
+  }
+  const before = chosen.size;
+  for (const test of drifted) if (headFiles.has(test)) chosen.add(test);
+  if (chosen.size > before)
+    reasons.push(
+      `${chosen.size - before} more for ${drift.length} files changed on the base since the map`,
+    );
   const sorted = [...chosen].toSorted();
   return {
     mode: "selected",
@@ -600,6 +619,7 @@ const main = async () => {
       map: { type: "string" },
       base: { type: "string" },
       head: { type: "string" },
+      tested: { type: "string" },
       selection: { type: "string" },
       workers: { type: "string", default: "4" },
       parallel: { type: "string", default: "1" },
@@ -632,15 +652,27 @@ const main = async () => {
   } else if (command === "select") {
     const head = need("head");
     const base = need("base");
+    // The commit the tests run on: the merge of the pull request into its base, or its head.
+    const tested = values.tested ?? head;
     const changes = changesBetween(base, head);
-    const headFiles = trackedFiles(head);
+    const headFiles = trackedFiles(tested);
     const readHead = (path: string) =>
-      execFileSync("git", ["show", `${head}:${path}`], {
+      execFileSync("git", ["show", `${tested}:${path}`], {
         encoding: "utf8",
         maxBuffer: 64 * 1024 * 1024,
       });
     const map = readMap(values.map, base);
-    const chosen = select(typeof map === "string" ? undefined : map, changes, headFiles, readHead);
+    const drift =
+      typeof map === "string"
+        ? []
+        : changesBetween(map.sha, tested === head ? base : `${tested}^1`);
+    const chosen = select(
+      typeof map === "string" ? undefined : map,
+      changes,
+      headFiles,
+      readHead,
+      drift,
+    );
     const selection = typeof map === "string" ? { ...chosen, reasons: [map] } : chosen;
     writeFileSync(need("out"), `${JSON.stringify(selection, null, 2)}\n`);
     const enforce = values.enforce === true;
@@ -651,13 +683,12 @@ const main = async () => {
         output,
         `run=${inputs.run}\nunit=${JSON.stringify(inputs.unit)}\nbrowser=${JSON.stringify(inputs.browser)}\n`,
       );
-    const verb = enforce ? "runs" : "would run";
     const line =
       selection.mode === "full"
-        ? `Test selection ${verb} every test: ${selection.reasons.join("; ")}`
-        : `Test selection ${verb} ${selection.unit.length} unit and ${selection.browser.length} browser test files`;
+        ? `Test selection picks every test: ${selection.reasons.join("; ")}`
+        : `Test selection picks ${selection.unit.length} unit and ${selection.browser.length} browser test files`;
     process.stdout.write(`${line}\n`);
-    summary(`### Test selection${enforce ? "" : " (shadow)"}\n\n${line}\n`);
+    summary(`### Test selection\n\n${line}\n`);
   } else if (command === "guard") {
     const selection = JSON.parse(readFileSync(need("selection"), "utf8")) as Selection;
     const problem = guard(selection, changesBetween(need("base"), need("head")));

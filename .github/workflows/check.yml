@@ -161,6 +161,7 @@ jobs:
           REPO: ${{ github.repository }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          TESTED: ${{ github.sha }}
           ENFORCE: "true"
         run: bash tools/test-map-select.sh "$RUNNER_TEMP/selection"
       # The JSON results feed test selection's report on pull requests.
@@ -315,6 +316,7 @@ jobs:
           REPO: ${{ github.repository }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          TESTED: ${{ github.sha }}
           ENFORCE: "true"
         run: bash tools/test-map-select.sh "$RUNNER_TEMP/selection"
       - name: List the browser tests
@@ -463,6 +465,7 @@ jobs:
           REPO: ${{ github.repository }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          TESTED: ${{ github.sha }}
         run: bash tools/test-map-select.sh .
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

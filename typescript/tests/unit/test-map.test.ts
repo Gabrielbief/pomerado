@@ -58,13 +58,19 @@ const modified = (path: string): Change => ({ status: "modified", path });
 const added = (path: string): Change => ({ status: "added", path });
 const pick = (
   changes: readonly Change[],
-  options: { map?: TestMap | undefined; files?: Set<string>; head?: Record<string, string> } = {},
+  options: {
+    map?: TestMap | undefined;
+    files?: Set<string>;
+    head?: Record<string, string>;
+    drift?: readonly Change[];
+  } = {},
 ) =>
   select(
     "map" in options ? options.map : map,
     changes,
     options.files ?? headFiles,
     (path) => options.head?.[path] ?? "",
+    options.drift,
   );
 
 describe("select", () => {
@@ -206,6 +212,33 @@ describe("select", () => {
       { files },
     );
     expect(selection.mode).toBe("full");
+  });
+
+  it("also runs the tests that reach what changed on the base after the map was built", () => {
+    // The map predates a base commit that changed a file the browser test reads, added a test and
+    // touched the toolchain and a file no test read. The pull request changes only one file.
+    const unitD = "typescript/tests/unit/d.test.ts";
+    const files = new Set([...headFiles, unitD, "package.json", "typescript/src/unread.ts"]);
+    const drift = [
+      modified("typescript/src/shared.ts"),
+      added(unitD),
+      modified("package.json"),
+      modified("typescript/src/unread.ts"),
+    ];
+    expect(pick([modified("typescript/src/only-b.ts")], { files, drift })).toMatchObject({
+      mode: "selected",
+      unit: [unitA, unitB, unitD],
+      browser: [specC],
+    });
+    // What the base changed never hides a pull request's own empty selection.
+    const emptied = pick(
+      [
+        { status: "deleted", path: "typescript/src/only-b.ts" },
+        { status: "deleted", path: unitB },
+      ],
+      { files: new Set([unitA, specC, "typescript/src/shared.ts"]), drift },
+    );
+    expect(emptied.mode).toBe("full");
   });
 });
 
@@ -547,6 +580,27 @@ describe("select and guard commands", () => {
     const rejected = cli("guard", "--selection", "empty.json", "--base", base, "--head", head);
     expect(rejected.status).toBe(1);
     expect(rejected.stdout).toContain("runs no test");
+
+    // The tests run on the merge of the pull request into a base that moved on since the map: a
+    // commit there changed a file two tests read and added a test, and both reach the selection.
+    git("checkout", "-q", "-b", "moved", base);
+    write("typescript/src/shared.ts", "export const moved = true;\n");
+    write("typescript/tests/unit/d.test.ts", "export {};\n");
+    git("add", ".");
+    git("commit", "-q", "-m", "moved");
+    const movedBase = git("rev-parse", "HEAD");
+    git("merge", "-q", "--no-ff", "-m", "merge", head);
+    const merged = cli(
+      "select",
+      ...["--map", "map.json", "--base", movedBase, "--head", head],
+      ...["--tested", git("rev-parse", "HEAD"), "--out", "merged.json"],
+    );
+    expect(merged.status, merged.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(join(repo, "merged.json"), "utf8"))).toMatchObject({
+      mode: "selected",
+      unit: [unitA, unitB, "typescript/tests/unit/d.test.ts"],
+      browser: [specC],
+    });
 
     // No map, a map off the base's history and a stale map all select everything.
     expect(readMap(join(repo, "missing.json"), base, repo)).toBe("no test map");
