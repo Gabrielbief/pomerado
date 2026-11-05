@@ -241,21 +241,37 @@ describe("map building", () => {
     });
   });
 
-  it("reads failed test files from Vitest and Playwright results", () => {
+  it("reads failed test files and their seconds from Vitest and Playwright results", () => {
+    // The job that ran the tests may have had its checkout elsewhere than the reader's.
     const vitest = {
       testResults: [
-        { name: "/repo/typescript/tests/unit/a.test.ts", status: "failed" },
-        { name: "/repo/typescript/tests/unit/b.test.ts", status: "passed" },
+        {
+          name: "/runner/a/repo/typescript/tests/unit/a.test.ts",
+          status: "failed",
+          startTime: 1000,
+          endTime: 3500,
+        },
+        { name: "/runner/a/repo/typescript/tests/unit/b.test.ts", status: "passed" },
       ],
     };
     const playwright = {
       suites: [
-        { file: "c.spec.ts", specs: [{ ok: false, file: "c.spec.ts" }], suites: [] },
+        {
+          file: "c.spec.ts",
+          specs: [
+            {
+              ok: false,
+              file: "c.spec.ts",
+              tests: [{ results: [{ duration: 1500 }, { duration: 500 }] }],
+            },
+          ],
+          suites: [],
+        },
         { file: "d.spec.ts", specs: [{ ok: true, file: "d.spec.ts" }] },
       ],
     };
-    expect(readResults(vitest, "/repo").failed).toEqual([unitA]);
-    expect(readResults(playwright, "/repo").failed).toEqual([specC]);
+    expect(readResults(vitest)).toEqual({ failed: [unitA], seconds: { [unitA]: 2.5 } });
+    expect(readResults(playwright)).toEqual({ failed: [specC], seconds: { [specC]: 2 } });
   });
 });
 

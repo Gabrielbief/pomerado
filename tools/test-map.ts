@@ -37,7 +37,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -213,14 +213,15 @@ export const guard = (selection: Selection, changes: readonly Change[]): string 
  */
 export const readResults = (
   results: unknown,
-  root: string,
 ): { failed: readonly string[]; seconds: Readonly<Record<string, number>> } => {
   const failed = new Set<string>();
   const seconds: Record<string, number> = {};
   const record = Object(results) as Record<string, unknown>;
   const pathOf = (file: unknown) => {
     if (typeof file !== "string") return undefined;
-    const path = file.startsWith("/") ? relative(root, file) : file;
+    // Vitest names files by absolute path, from a checkout that may sit anywhere on its runner.
+    const index = file.lastIndexOf("/typescript/tests/");
+    const path = index === -1 ? file : file.slice(index + 1);
     return path.startsWith("typescript/") ? path : `typescript/tests/browser/${path}`;
   };
   if (Array.isArray(record["testResults"]))
@@ -577,10 +578,7 @@ const main = async () => {
       process.stdout.write("The selection runs tests for every change beyond documentation.\n");
   } else if (command === "report") {
     const selection = JSON.parse(readFileSync(need("selection"), "utf8")) as Selection;
-    const root = process.cwd();
-    const read = positionals.map((path) =>
-      readResults(JSON.parse(readFileSync(path, "utf8")), root),
-    );
+    const read = positionals.map((path) => readResults(JSON.parse(readFileSync(path, "utf8"))));
     const failed = [...new Set(read.flatMap((results) => results.failed))].toSorted();
     const seconds: Record<string, number> = Object.assign(
       {},
