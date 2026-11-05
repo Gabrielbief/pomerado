@@ -115,8 +115,8 @@ When the site does not match the request exactly, tell two cases apart:
 
 **Sign in only when the task needs it.** Try a public task signed out first. Sign in when the
 request asks for it, the task is about the caller's own account, such as a cart a later call must find
-(.agents/cart/SKILL.md; a tool that fills a cart and returns its quote in one run may use the
-site's guest cart), or the site puts the data behind a login wall. A login page on the
+(.agents/cart/SKILL.md), or the site puts the data behind a login wall. A tool that fills a cart
+and returns its quote in one run may use the site's guest cart instead. A login page on the
 first load of a public task is not a reason to sign in: look for the public route first.
 
 **Check the page is on the site before exploring it.** The site is every `https:` origin on
