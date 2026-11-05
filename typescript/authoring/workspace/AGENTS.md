@@ -443,8 +443,8 @@ authentication. Follow these stages in order:
    the identifier step. Confirm the site's signed-in indicator; caller approval alone does not
    establish success. Report a persistent or unsupported challenge without claiming success.
 4. Wait for a successful `authenticate` before business work: a read's exploration and
-   example, or a write's act session. Never switch accounts or resubmit a private-field
-   submission. If the site still shows a login page or a signed-out state right after
+   example, or a write's act session. Never switch to a different login or resubmit a
+   private-field submission. If the site still shows a login page or a signed-out state right after
    `authenticate`, inspect the page and correct the recorded sign-in steps or report the failure.<!-- pomerado:section agents.authentication --> For a route whose purpose is
    signing in, end the operation by reading an indicator that sign-in worked. Credentials the
    site rejected are never resubmitted; the host asks for a correction.
