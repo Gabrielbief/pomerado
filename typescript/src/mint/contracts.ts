@@ -392,6 +392,16 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   /** Proves this submission stopped before execution; says nothing about prior effects. */
   readonly reviewDispatch?: "not_sent";
   /**
+   * Set by the host on a failed example, act or residual step when nothing of the step reached
+   * the site, such as a host check that refused it at its first commit mark. The harness honors
+   * it only on a failure with no `execution` and no `runnerFailure`, which describe the step's
+   * run themselves. It then tracks no write for the step, as for `execution.dispatch`
+   * `not_sent`, so the repeat guard lets it run again; the minter hears the failure as it would
+   * without it. It is the host's word alone, and the harness infers it from nothing: a host never
+   * sets it on a step that may have sent anything.
+   */
+  readonly nothingSent?: true;
+  /**
    * Why a maintenance recovery gate refused: its reason, what it expected and what it got, and
    * the earliest time a retry can pass it, so the agent fixes or waits instead of guessing.
    */
