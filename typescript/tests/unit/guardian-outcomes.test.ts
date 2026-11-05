@@ -376,7 +376,7 @@ it("tells a write build's task update review that its empty allowedEffects says 
   expect(request.trusted_authority.allowedEffects).toEqual([]);
   expect(request.update_review.effect).toBe("write");
   expect(request.trusted_review.policy).toContain(
-    "The host sets update_review.effect, not the agent. When it is write, the build is already a write build: no change needs to make it one, and the confirmation need not cover the write. In a task update review, trusted_authority.allowedEffects is empty on purpose, because an update performs no action on the site. That empty list, and the read-only allowedEffects of earlier exploration reviews, say nothing about the build's effect.",
+    "The host sets update_review.effect, not the agent. When it is write, the build is already a write build: no change needs to make it one, and the confirmation need not cover the write. In a task update review, trusted_authority.allowedEffects authorizes nothing, because an update performs no action on the site. Those effects, empty or not, and the read-only allowedEffects of earlier exploration reviews, say nothing about the build's effect.",
   );
 });
 
