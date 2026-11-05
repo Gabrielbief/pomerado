@@ -209,7 +209,6 @@ jobs:
           path: ${{ runner.temp }}/browser-durations
           run-id: ${{ steps.durations.outputs.run-id }}
           github-token: ${{ github.token }}
-      - run: mkdir -p "$RUNNER_TEMP/browser-durations" && cp seed-durations.json "$RUNNER_TEMP/browser-durations/"
       - run: corepack pnpm exec playwright test --list --reporter=json > "$RUNNER_TEMP/browser-tests.json"
       - name: Plan the shards
         id: plan
@@ -264,7 +263,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/browser-durations" &&
           node tools/browser-shards.ts record --results test-results/browser-results.json
           --expected "$RUNNER_TEMP/browser-shards/shard-${{ matrix.shard }}.json"
-          --out "$RUNNER_TEMP/browser-durations/durations-${{ matrix.shard }}.json" --budget-seconds 100
+          --out "$RUNNER_TEMP/browser-durations/durations-${{ matrix.shard }}.json" --budget-seconds 80
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: github.event_name == 'push'
         with:

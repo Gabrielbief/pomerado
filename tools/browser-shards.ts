@@ -28,7 +28,7 @@
  *   node tools/browser-shards.ts plan --tests <list.json> --durations <dir> --out <dir>
  *     [--target-seconds 80] [--workers 4] [--max-shards 16] [--default-seconds 3]
  *   node tools/browser-shards.ts record --results <report.json> --expected <shard-k.json>
- *     --out <durations.json> [--budget-seconds 100]
+ *     --out <durations.json> [--budget-seconds 80]
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
