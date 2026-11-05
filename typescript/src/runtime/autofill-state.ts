@@ -539,14 +539,18 @@ const shown = (value: string | null | undefined) =>
   value !== undefined && value !== null && value !== "";
 
 /**
- * Whether two code boxes are the same field: the same `id` or `name`, or, when neither box shows
- * either, the same selector. A box named under another selector is still the same box.
+ * Whether two code boxes are the same field: the same selector, `id` or `name`. A box named under
+ * another selector is still the same box, and so is one whose `id` or `name` the sign-in kept
+ * none of, as when its naming held a secret.
  */
 const sameBox = (here: NamedFields["fields"][number], before: NamedFields["fields"][number]) => {
   const a = here.identity;
   const b = before.identity;
-  if (![a?.id, a?.name, b?.id, b?.name].some(shown)) return here.selector === before.selector;
-  return (shown(a?.id) && a?.id === b?.id) || (shown(a?.name) && a?.name === b?.name);
+  return (
+    here.selector === before.selector ||
+    (shown(a?.id) && a?.id === b?.id) ||
+    (shown(a?.name) && a?.name === b?.name)
+  );
 };
 
 /**

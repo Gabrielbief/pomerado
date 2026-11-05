@@ -45,6 +45,8 @@ interface SiteScript {
   readonly sent?: "page" | "none";
   /** The `id` and `name` of the element each selector finds; none by default. */
   readonly named?: Readonly<Record<string, { readonly id: string; readonly name: string }>>;
+  /** The code box's instruction before any fill. */
+  readonly instruction?: string;
 }
 
 /** A scripted site on fixture hooks, with the fills it took. */
@@ -53,7 +55,7 @@ const scriptedSite = (script: SiteScript) => {
     screen: "sign-in",
     signedIn: false,
     markers: new Set<string>(),
-    instruction: "Enter the code we texted you",
+    instruction: script.instruction ?? "Enter the code we texted you",
   };
   const fills: { readonly screen: string; readonly values: readonly string[] }[] = [];
   // Both code screens sit on one path, as a single-page sign-in shows them.
@@ -157,7 +159,11 @@ const replay = (recipe: SignInRecipe, hooks: AutofillHooks<TestFailure>, answers
         entryUrl: `${origin}/sign-in`,
         credentials: { username: phone, primaryIdentifierKind: "phone", phone },
         ask,
-        broker: { register: () => Effect.void, registeredSecretMatches: () => Effect.succeed([]) },
+        // The login's phone is the one registered value a control's naming can hold.
+        broker: {
+          register: () => Effect.void,
+          registeredSecretMatches: (text) => Effect.succeed(text.includes(phone) ? [phone] : []),
+        },
         site: "example.test",
         correlation: undefined,
         emit: () => Effect.void,
@@ -446,4 +452,33 @@ it("sends no code refill into a row of boxes that takes some of the first row's 
     Either.right(expect.objectContaining({ reason: "credential_already_filled" })),
   );
   expect(site.fills.map(({ screen }) => screen)).toEqual(["sign-in", "text"]);
+});
+
+// The first code box's instruction names the login's phone, so the sign-in keeps no id or name
+// for it; the same box under the same selector is still the same box, so no refill goes into it.
+it("sends no code refill into the same box when the first box's naming held the login's phone", async () => {
+  const site = scriptedSite({
+    screens: { ...screens, text: ["#code", "#code-error"] },
+    named: { "#code": { id: "code", name: "code" } },
+    instruction: `Enter the code we texted to ${phone}`,
+    fill: (screen, _values, count) =>
+      screen === "sign-in" ? { next: "text" } : count === 0 ? {} : { markers: ["#code-error"] },
+  });
+  const box = {
+    page: `${origin}/sign-in/verify`,
+    fields: [{ selector: "#code", slot: "code" as const }],
+  };
+  const { outcome } = await replay(
+    twoCodes(phoneStep, box, {
+      ...box,
+      refills: ["code"],
+      rejectedMarkers: [{ slot: "code", selector: "#code-error" }],
+    }),
+    site.hooks,
+    ["111111", "222222", "333333", "444444"],
+  );
+  expect(site.codes()).toEqual(["111111"]);
+  expect(outcome).toEqual(
+    Either.right(expect.objectContaining({ reason: "credential_already_filled" })),
+  );
 });
