@@ -1296,7 +1296,7 @@ it("renders the pinned standalone authoring", async () => {
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
     ["4f106ff2ac2a2424721183465c82cd28a72954abca15266bd7110b9ce0bf45a1", "core"],
-    ["eace77e05a85b520deedd968e1cd7778f31953ab83943d68f498f689d9f1518e", "search"],
+    ["583849972e0fb5b1bc3d9e8a87848b2e655619085eeaefc0215a1b6c2cdfa105", "search"],
     ["edafa3a7391c04741d5169207f16f9484d65c5284404f2b99c102deafb4c2372", "auth"],
     ["892ed73535d99bbd6a0b54f9351d8f0995267956de380f3cff59bb3f6c0d7213", "testing"],
     ["2b559ad88157f28be2a054787f4c736cf192bb825760bdf3050c01a59d060ba8", "pagination"],
@@ -1425,7 +1425,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     ...on.digests.filter(([, name]) => name === "search"),
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
-    ["b5c7ec3a8dc02db0e31db234241848346fa909d731c0bcb3efc430de6d0d48cf", "search"],
+    ["515a858186eb095f058cb04a70e82095ad01e86173361c02a85908890ccb3a2e", "search"],
     ["d228e29f45245f9afef7abb3862e02a4bc9fdb749ce6554130c2cf46db95fac2", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
