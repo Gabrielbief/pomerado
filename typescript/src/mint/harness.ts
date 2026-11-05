@@ -916,6 +916,27 @@ const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
     ),
   );
 
+/**
+ * Whether every answered question a sign-in step cites (`confirmedBy`) is one this build holds an
+ * answer to, `answered`, by id, and none is a confirm the owner declined. A question from another
+ * build or one left unanswered has no answer here. Guardian judges whether an answer allowed the
+ * step's dismiss.
+ */
+const citesAnswers = (
+  submitted: ExecutionRequest,
+  answered: ReadonlyMap<string, AnsweredQuestion>,
+) => {
+  const step = submitted.purpose === "authenticate" ? submitted.signInStep : undefined;
+  const cited = step !== undefined && "fields" in step ? (step.confirmedBy ?? []) : [];
+  return cited.every((id) => {
+    const answer = answered.get(id)?.answer;
+    return (
+      answer !== undefined &&
+      (typeof answer === "string" || !("confirmed" in answer) || answer.confirmed)
+    );
+  });
+};
+
 const diagnosticUnavailable = (error: unknown) =>
   new MintFailure({
     code: "Unavailable",
@@ -5532,6 +5553,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   }),
               });
               if (submitted.target === "liveBrowser" && submitted.maxWorkers !== 1)
+                return yield* new MintFailure({ code: "InvalidRequest" });
+              if (!citesAnswers(submitted, answeredQuestions))
                 return yield* new MintFailure({ code: "InvalidRequest" });
               if (submitted.purpose === "example" && exampleClaimed && !repeatableRead)
                 return yield* new MintFailure({ code: "AlreadyExecuted" });

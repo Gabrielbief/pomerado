@@ -84,6 +84,10 @@ query, fragment or path, since a host refuses such a link for a workspace site.
    another page. The banner's own control counts even when it sits in the sign-in form or has no
    type, as on a page wrapped in one form: it sends nothing typed, since the host empties the
    step's fields and cancels that click's own submission.
+   When a notice that is not a cookie banner covers the sign-in and its only way out commits the
+   account, ask the owner once whether to accept it; on yes, prefer putting its accept control in
+   the sign-in step's `dismiss` with the answered question cited in `confirmedBy`, and keep the
+   build a read.
    Reopening the login route in an `explore` to read it again is fine, after a failed sign-in too.
    `references/auth-entry.ts` shows a bounded second probe that reads a login form's controls.
 

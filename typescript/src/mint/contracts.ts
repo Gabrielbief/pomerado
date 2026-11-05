@@ -643,6 +643,10 @@ export const MintRequest = Schema.Struct({
 export type MintRequest = typeof MintRequest.Type;
 
 const SignInSelector = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000));
+/** The ids of the answered questions whose answers confirm a change or a step (`confirmedBy`). */
+const ConfirmedBy = Schema.Array(
+  Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64)),
+).pipe(Schema.maxItems(8));
 const SignedInUrlPath = Schema.String.pipe(Schema.pattern(/^\/[^?#]{0,1999}$/));
 const SignedInOpenPath = Schema.String.pipe(Schema.pattern(/^\/[^#]{0,1999}$/));
 /**
@@ -750,6 +754,13 @@ export const SignInStep = Schema.Union(
      * field. Never a submit, a field or a control of the sign-in's own form.
      */
     dismiss: Schema.optional(SignInSelector),
+    /**
+     * The answered questions of this build where the owner allowed `dismiss` to accept a notice
+     * that blocks the sign-in and is not a cookie banner. The host refuses a step that names a
+     * question with no answer in this build or one the owner declined, and the recipe leaves that
+     * dismiss out, so runs never accept the notice.
+     */
+    confirmedBy: Schema.optional(ConfirmedBy),
     /**
      * The action with a lasting effect on the account this screen's submit takes: signing out
      * another device or session, or trusting this browser. The recipe records it, and each run
@@ -1547,9 +1558,7 @@ export type JobBuildBlocked = typeof JobBuildBlocked.Type;
 export const TaskUpdateRequest = Schema.Struct({
   summary: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(blockedExplanationLimit)),
   changes: Schema.Array(TaskChange).pipe(Schema.minItems(1), Schema.maxItems(8)),
-  confirmedBy: Schema.Array(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))).pipe(
-    Schema.maxItems(8),
-  ),
+  confirmedBy: ConfirmedBy,
   recommend: Schema.Literal("update", "new_mint"),
   suggestedRequest: Schema.optional(
     Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(blockedExplanationLimit)),

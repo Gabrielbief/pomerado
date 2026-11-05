@@ -140,6 +140,8 @@ export interface AutofillStepRequest {
   readonly option?: string | undefined;
   /** The own close, reject or accept control of a notice that covers the screen (`AutofillStep`). */
   readonly dismiss?: string | undefined;
+  /** The owner's answers that allowed `dismiss` to accept a notice (`AutofillStep`). */
+  readonly confirmedBy?: readonly string[] | undefined;
   /** The action with a lasting effect on the account the submit takes (`AutofillStep`). */
   readonly choice?: SignInChoice | undefined;
 }
@@ -182,6 +184,12 @@ export interface AutofillStep<Slot extends FillSlot = AutofillSlot> {
    * controls: the host then cancels that click's submission, so it submits nothing.
    */
   readonly dismiss?: string | undefined;
+  /**
+   * The ids of this build's answered questions where the owner allowed `dismiss` to accept a
+   * notice that is not a cookie banner. The recorded step leaves that dismiss out, so a run never
+   * clicks it.
+   */
+  readonly confirmedBy?: readonly string[] | undefined;
   /**
    * `keyboard`: the host presses the submit from the keyboard rather than clicking it first, as a
    * recorded screen whose submit another element covered was sent (a recipe's `submitVia`).
@@ -236,6 +244,12 @@ const Target = Schema.Struct({
    * judges the controls again.
    */
   scriptHref: Schema.optional(Schema.Boolean),
+  /**
+   * The code of its first script destination other than one that does nothing (`scriptAction`,
+   * `scriptHref`), as the browser runs it, at most 2,000 characters: a refusal's evidence alone,
+   * which no check judges (`targetEvidence`).
+   */
+  scriptCode: Schema.optional(Schema.String),
   methods: Schema.Array(Schema.String),
   /**
    * The method its form submits by with it: a submit button's own `formmethod` when it has one,
