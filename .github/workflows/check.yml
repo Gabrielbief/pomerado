@@ -220,7 +220,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/browser-shards"
           git diff --unified=0 HEAD^1 HEAD -- typescript/tests/browser > "$RUNNER_TEMP/browser-changes.diff"
-          git diff --name-only --diff-filter=d HEAD^1 HEAD -- 'typescript/tests/unit/*.test.ts' \
+          git diff --name-only -z --diff-filter=d HEAD^1 HEAD -- 'typescript/tests/unit/*.test.ts' \
             > "$RUNNER_TEMP/browser-shards/unit-repeat.txt"
           if [ -s "$RUNNER_TEMP/browser-shards/unit-repeat.txt" ]; then echo "unit=true" >> "$GITHUB_OUTPUT"; fi
       - name: Plan the shards
@@ -312,8 +312,9 @@ jobs:
           retention-days: 30
           overwrite: true
   # Runs the tests a pull request adds or changes several times over, so a new flaky test fails
-  # here, before it merges, rather than in later runs. The browser tests touched by the change run
-  # three times each, as many as fit about 80 s; the changed unit test files run three times each.
+  # here, before it merges, rather than in later runs. Browser tests whose own lines in a spec file
+  # change run three times each, as many as fit about 80 s (tools/browser-shards.ts says how lines
+  # map to tests). Each test in a changed unit test file runs three times too.
   repeat-changed:
     name: Repeat changed tests
     needs: browser-plan
@@ -325,6 +326,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.22.1
@@ -338,7 +341,7 @@ jobs:
       - name: Repeat the changed unit test files
         if: needs.browser-plan.outputs.repeat-unit == 'true'
         run: |
-          mapfile -t files < "$RUNNER_TEMP/browser-shards/unit-repeat.txt"
+          mapfile -d '' -t files < "$RUNNER_TEMP/browser-shards/unit-repeat.txt"
           corepack pnpm exec vitest run --repeats 2 "${files[@]}"
       - if: needs.browser-plan.outputs.repeat-browser == 'true'
         run: corepack pnpm build

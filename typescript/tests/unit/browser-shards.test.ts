@@ -15,6 +15,8 @@ interface Spec {
   readonly seconds?: number;
   /** Playwright's outcome for the test, `expected` by default when it has a duration. */
   readonly status?: string;
+  /** `skipped` for a test the spec skips on purpose. */
+  readonly expectedStatus?: string;
   readonly line?: number;
 }
 
@@ -25,13 +27,13 @@ interface Suite {
     title: string;
     file: string;
     line: number;
-    tests: { status: string; results: { duration: number }[] }[];
+    tests: { status: string; expectedStatus: string; results: { duration: number }[] }[];
   }[];
   suites: Suite[];
 }
 
 /** A Playwright JSON report, or `--list` output when no spec has a duration, for the specs. */
-const report = (specs: readonly Spec[]) => {
+const report = (specs: readonly Spec[], errors: readonly string[] = []) => {
   const files = new Map<string, Suite>();
   for (const spec of specs) {
     let suite = files.get(spec.file);
@@ -54,12 +56,13 @@ const report = (specs: readonly Spec[]) => {
       tests: [
         {
           status: spec.status ?? (spec.seconds === undefined ? "skipped" : "expected"),
+          expectedStatus: spec.expectedStatus ?? "passed",
           results: spec.seconds === undefined ? [] : [{ duration: spec.seconds * 1000 }],
         },
       ],
     });
   }
-  return { config: {}, suites: [...files.values()], errors: [] };
+  return { config: {}, suites: [...files.values()], errors: errors.map((message) => ({ message })) };
 };
 
 const key = (spec: Spec) => [spec.file, ...spec.titles].join(" › ");
@@ -289,8 +292,8 @@ describe("browser shards", () => {
     expect(mixed.status).toBe(1);
     expect(mixed.output).toContain("::warning::Flaky: a.spec.ts › races failed, then passed");
     expect(mixed.output).toContain("::warning::Quarantined, owned by someone");
-    expect(mixed.output).toContain("::error::Failed twice: a.spec.ts › broken");
-    expect(mixed.output).not.toContain("Failed twice: b.spec.ts › known");
+    expect(mixed.output).toContain("::error::Passed in neither run: a.spec.ts › broken");
+    expect(mixed.output).not.toContain("Passed in neither run: b.spec.ts › known");
 
     writeFileSync(join(root, "first.json"), JSON.stringify(report([flaky, known, fine])));
     expect(record({ results: "first.json", rerun: "rerun.json" }).status).toBe(0);
@@ -299,6 +302,44 @@ describe("browser shards", () => {
     expect(record({ results: "first.json", rerun: "rerun.json" }).output).toContain('needs "test", "owner" and "issue"');
     writeFileSync(join(root, "quarantine.json"), quarantine("someone", "an internal note"));
     expect(record({ results: "first.json", rerun: "rerun.json" }).output).toContain("full GitHub issue URL");
+  });
+
+  it("fails a shard whose test never passed, even one the first run didn't get to, or an error outside any test", () => {
+    const root = temporary();
+    const failing = { file: "a.spec.ts", titles: ["fails once"], seconds: 1, status: "unexpected" };
+    const unreached = { file: "a.spec.ts", titles: ["not reached"], status: "skipped" };
+    const skipped = { file: "a.spec.ts", titles: ["skipped on purpose"], status: "skipped", expectedStatus: "skipped" };
+    const record = (first: object, rerun: object) => {
+      writeFileSync(join(root, "first.json"), JSON.stringify(first));
+      writeFileSync(join(root, "rerun.json"), JSON.stringify(rerun));
+      return run([
+        "record",
+        "--results",
+        join(root, "first.json"),
+        "--rerun",
+        join(root, "rerun.json"),
+        "--out",
+        join(root, "durations.json"),
+      ]);
+    };
+
+    const neverPassed = record(
+      report([failing, unreached, skipped]),
+      report([{ ...failing, status: "expected" }, { ...unreached, seconds: 1, status: "unexpected" }]),
+    );
+    expect(neverPassed.status).toBe(1);
+    expect(neverPassed.output).toContain("Passed in neither run: a.spec.ts › not reached");
+    expect(neverPassed.output).not.toContain("skipped on purpose");
+
+    const passedLater = record(
+      report([failing, unreached, skipped]),
+      report([{ ...failing, status: "expected" }, { ...unreached, seconds: 1, status: "expected" }]),
+    );
+    expect(passedLater.status, passedLater.output).toBe(0);
+
+    const workerError = record(report([{ ...failing, status: "expected" }], ["worker teardown failed"]), report([]));
+    expect(workerError.status).toBe(1);
+    expect(workerError.output).toContain("The first run reported 1 errors outside any test");
   });
 
   it("refuses a quarantine entry for a test that no longer exists", () => {
@@ -346,6 +387,8 @@ describe("browser shards", () => {
       "--- a/tests/a.spec.ts",
       "+++ b/tests/a.spec.ts",
       "@@ -22 +22 @@",
+      "-  const old = 1;",
+      "+++ an added line whose text starts with two plus signs",
       "@@ -40,2 +39,0 @@",
       "diff --git a/tests/b.spec.ts b/tests/b.spec.ts",
       "--- a/tests/b.spec.ts",
