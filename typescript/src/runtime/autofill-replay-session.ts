@@ -165,8 +165,16 @@ const makeReplaySession = <E extends YieldableError, V extends string, L extends
     anythingSent: false,
     chosen: undefined as SignInMethodChoice | undefined,
     ran: [] as AutofillStep[],
-    /** The password or code a retry filled a second time, which is never filled again. */
+    /**
+     * The password or code a retry, or a recorded screen's planned refill, filled a second time,
+     * which is never filled again.
+     */
     refilled: new Set<AutofillSecret>(),
+    /**
+     * A recorded screen's planned code refill went out (`plannedRefill`): a code screen that
+     * comes back takes another code only when the site showed it refused one.
+     */
+    codeRefilled: false,
     /** A screen's wait that sent nothing found the session signed in, or can't tell. */
     alreadySignedIn: false,
     /** The first screen's wait ended on a login entry that can't tell (`entryCantTell`). */

@@ -311,18 +311,18 @@ describe("decodeSignInRecipe", () => {
       }),
     ],
     [
-      "a version 5 step that refills a code",
+      "a version 5 step that refills a recovery code",
       JSON.stringify({
         version: 5,
         steps: [
           ...steps,
           {
-            page: "https://example.test/login/code",
+            page: "https://example.test/login/recovery",
             fields: [
               { selector: "#password", slot: "password" },
-              { selector: "#code", slot: "code" },
+              { selector: "#recovery", slot: "recovery_code" },
             ],
-            refills: ["code"],
+            refills: ["recovery_code"],
           },
         ],
         signedIn,

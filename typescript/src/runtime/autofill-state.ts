@@ -13,7 +13,11 @@ import type {
   IdentifierKind,
   SecretSlot,
 } from "../destinations/autofill-step.js";
-import { type AutofillRecipeStep, isSecondFactor } from "../destinations/autofill-recipe.js";
+import {
+  type AutofillRecipeStep,
+  isSecondFactor,
+  type RefillSlot,
+} from "../destinations/autofill-recipe.js";
 import type { ControlIdentity } from "../destinations/autofill-page-code.js";
 import type { TypedBox } from "../destinations/autofill-fill.js";
 import { report, type SignInReportContext } from "./sign-in-telemetry.js";
@@ -198,7 +202,10 @@ interface AutofillRecordedStep {
   readonly methods?: AutofillRecipeStep["methods"];
   /** The picked method's `option`, with `submit`, when it was chosen from a native select. */
   readonly option?: string;
-  /** The password an earlier screen took that this one asked for again beside a second factor. */
+  /**
+   * The password an earlier screen took that this one asked for again beside a second factor, or
+   * the code, on a second code screen.
+   */
   readonly refills?: AutofillRecipeStep["refills"];
   /** The covering notice's own control the host clicks on this screen (`AutofillStep.dismiss`). */
   readonly dismiss?: string;
@@ -508,11 +515,52 @@ export const reasksPassword = (
   );
 };
 
-/** Marks the screen just armed as asking for the password again (`reasksPassword`). */
-export const noteRefill = (state: AutofillSignInState) => {
+/** The selectors of a screen's code fields. */
+const codeSelectors = (step: Pick<AutofillStep, "fields">) =>
+  step.fields.filter((field) => field.slot === "code").map((field) => field.selector);
+
+/**
+ * Whether `step` takes a code in a field the earlier code screen (`earlier`) did not: each of its
+ * code fields names another selector, so the same code screen shown again never reads as a second
+ * one. Two codes typed into the same box are not told apart.
+ */
+export const takesAnotherCode = (
+  step: Pick<AutofillStep, "fields">,
+  earlier: Pick<AutofillStep, "fields"> | undefined,
+) => {
+  const before = earlier === undefined ? [] : codeSelectors(earlier);
+  const here = codeSelectors(step);
+  return (
+    before.length > 0 && here.length > 0 && here.every((selector) => !before.includes(selector))
+  );
+};
+
+/**
+ * Whether a screen of the open sign-in (`open`) asks for a second, different code after the code
+ * an earlier screen took went out (`refills`, the secrets filled before, is the code alone): its
+ * code field is not the last code screen's (`takesAnotherCode`), as a sign-in that sends one code
+ * by text and then another by email does. The recipe records the refill there, and only there a
+ * run's replay makes it, once.
+ */
+export const reasksCode = (
+  open: AutofillSignInState | undefined,
+  step: AutofillStep,
+  refills: readonly AutofillSlot[],
+) =>
+  refills.includes("code") &&
+  refills.every((slot) => slot === "code") &&
+  takesAnotherCode(
+    step,
+    open?.steps.findLast((taken) => taken.fields.some((field) => field.slot === "code")),
+  );
+
+/**
+ * Marks the screen just armed as asking again for the password (`reasksPassword`), or for a
+ * second code (`reasksCode`).
+ */
+export const noteRefill = (state: AutofillSignInState, slot: RefillSlot = "password") => {
   const armed = state.steps.at(-1);
-  if (armed !== undefined)
-    state.steps[state.steps.length - 1] = { ...armed, refills: ["password"] };
+  if (armed !== undefined) state.steps[state.steps.length - 1] = { ...armed, refills: [slot] };
 };
 
 /**

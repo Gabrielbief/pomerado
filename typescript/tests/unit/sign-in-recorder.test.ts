@@ -729,6 +729,48 @@ it("records no refill on a screen that asks for the password again after a code 
   expect(published?.recipe.steps.some((step) => "refills" in step)).toBe(false);
 });
 
+it("records a second code screen whose code box is another as a code refill, and the same code screen sent again as none", async () => {
+  const codeScreen = (selector: string): SignInStep => ({
+    fields: [{ selector, slot: "code" }],
+  });
+  // Code boxes that send themselves: the page moves on once the last digit is typed.
+  const selfSending = (step: AutofillStep): AutofillStepReport => ({
+    outcome: "filled",
+    fields: step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
+    submit: step.submit === undefined ? "page" : "clicked",
+    url: `${origin}/next`,
+  });
+  const record = async (second: string) => {
+    const host = harness({
+      held: account,
+      answers: { code: ["111111", "222222"] },
+      report: selfSending,
+    });
+    return host.run((recorder) =>
+      Effect.gen(function* () {
+        yield* recorder.step(identifierAndPassword, undefined, Effect.void);
+        yield* recorder.step(codeScreen("#text-code"), undefined, Effect.void);
+        yield* recorder.step(codeScreen(second), undefined, Effect.void);
+        expect((yield* recorder.step(signedIn, undefined, Effect.void)).verified).toBe(true);
+        return recorder.published();
+      }),
+    );
+  };
+  const published = await record("#email-code");
+  expect(published?.recipe).toMatchObject({
+    version: 5,
+    steps: [
+      { fields: [{ selector: "#user" }, { selector: "#password" }] },
+      { fields: [{ selector: "#text-code", slot: "code" }] },
+      { fields: [{ selector: "#email-code", slot: "code" }], refills: ["code"] },
+    ],
+  });
+  expect(published?.recipe.steps[1]).not.toHaveProperty("refills");
+
+  const again = await record("#text-code");
+  expect(again?.recipe.steps.some((step) => "refills" in step)).toBe(false);
+});
+
 it("fills a password twice at most in one sign-in, and a ZIP once", async () => {
   const host = harness({ held: account, answers: { zip: ["94110"] } });
   await host.run((recorder) =>
