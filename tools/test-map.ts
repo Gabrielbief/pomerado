@@ -5,10 +5,9 @@
  * or ran while that test file ran alone, through tools/test-map-trace.ts. Maps are built only from
  * `main`, by trusted runs, never from a pull request. A pull request run only reads the newest one.
  *
- * On a pull request, check.yml records which test files the selection would run and compares that
- * with the results. Only while the repository variable TEST_SELECTION_ENFORCE is `true` does a pull
- * request run just the selected test files; otherwise every test runs, and pushes to main always
- * run every test. It selects everything when it can't see a change's reach:
+ * A pull request runs only the test files its change needs, unless the repository variable
+ * TEST_SELECTION_DISABLED is `true` or it carries the `ci:full` label; pushes to main always run
+ * every test. It selects everything when it can't see a change's reach:
  *
  * - no usable map, more than `maxChangedFiles` changed files, or a change to the toolchain, package
  *   manifests, test configuration, workflows or this selector;
@@ -663,7 +662,7 @@ const main = async () => {
     const selection = JSON.parse(readFileSync(need("selection"), "utf8")) as Selection;
     const problem = guard(selection, changesBetween(need("base"), need("head")));
     if (problem !== undefined) {
-      // In shadow the guard only warns, since every test still runs.
+      // A job that only records the selection warns; the jobs that run it fail.
       process.stdout.write(`${values.warn === true ? "::warning::" : "::error::"}${problem}\n`);
       if (values.warn !== true) process.exitCode = 1;
     } else
@@ -680,9 +679,9 @@ const main = async () => {
       missed.length === 0
         ? `No failed test file fell outside the selection (${failed.length} failed).`
         : `${missed.length} failed test file(s) fell outside the selection: ${missed.join(", ")}`;
-    const time = `It would have run ${report.unit.selectedSeconds} of ${report.unit.totalSeconds} unit test-seconds and ${report.browser.selectedSeconds} of ${report.browser.totalSeconds} browser test-seconds.`;
+    const time = `The selection covers ${report.unit.selectedSeconds} of ${report.unit.totalSeconds} unit test-seconds and ${report.browser.selectedSeconds} of ${report.browser.totalSeconds} browser test-seconds in these results.`;
     process.stdout.write(`${missed.length === 0 ? "" : "::warning::"}${line}\n${time}\n`);
-    summary(`### Test selection report (shadow)\n\n${line} ${time}\n`);
+    summary(`### Test selection report\n\n${line} ${time}\n`);
   } else {
     throw new Error("Use run, merge, select, guard or report");
   }

@@ -10,7 +10,7 @@
 #   runs on a GitHub-hosted runner. A merge queue needs its own trigger and route here first.
 # A runner either variable names must have 4 vCPUs, as the browser job's --workers=4 and the
 # browser plan's --workers 4 expect.
-# An unset variable falls back to a Blacksmith runner. The scans, test selection's shadow jobs and
+# An unset variable falls back to a Blacksmith runner. The scans, test selection's record jobs and
 # the `CI` job are short and always run on GitHub-hosted runners.
 # typescript/tests/unit/ci-runner-routing.test.ts checks these routes for forks, outside authors,
 # maintainers and pushes.
@@ -44,13 +44,12 @@ on:
         value: ${{ jobs.check.outputs.package-sha256 }}
 permissions:
   contents: read
-# Whether this run selects its tests (see the test-selection job): only a pull request, only while
-# the repository variable TEST_SELECTION_ENFORCE is `true`, and never with TEST_SELECTION_DISABLED
-# or the `ci:full` label.
+# Whether this run selects its tests (see the test-selection job): every pull request does, unless
+# the repository variable TEST_SELECTION_DISABLED is `true` or it carries the `ci:full` label.
+# Pushes to main, through the release workflow, always run every test.
 env:
   SELECT_TESTS: >-
-    ${{ github.event_name == 'pull_request' && vars.TEST_SELECTION_ENFORCE == 'true'
-    && vars.TEST_SELECTION_DISABLED != 'true'
+    ${{ github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
     && !contains(github.event.pull_request.labels.*.name, 'ci:full') }}
 jobs:
   # Secret scan with gitleaks and .gitleaks.toml. Every event scans the checked-out tree. A pull
@@ -152,8 +151,8 @@ jobs:
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm typecheck
       - run: corepack pnpm build
-      # While test selection is enforced on a pull request (see the test-selection job), only the
-      # selected unit test files run. Everything else here always runs.
+      # On a pull request with test selection (see the test-selection job), only the selected unit
+      # test files run. Everything else here always runs.
       - name: Select unit tests
         id: select
         if: env.SELECT_TESTS == 'true'
@@ -306,8 +305,8 @@ jobs:
           path: ${{ runner.temp }}/browser-durations
           run-id: ${{ steps.durations.outputs.run-id }}
           github-token: ${{ github.token }}
-      # While test selection is enforced on a pull request (see the test-selection job), only the
-      # selected spec files are planned, and each planned test must still report a result.
+      # On a pull request with test selection (see the test-selection job), only the selected spec
+      # files are planned, and each planned test must still report a result.
       - name: Select browser tests
         id: select
         if: env.SELECT_TESTS == 'true'
@@ -363,8 +362,8 @@ jobs:
   browser:
     name: Browser tests (${{ matrix.shard }}/${{ strategy.job-total }})
     needs: browser-plan
-    # The plan has no browser test only when enforced test selection chose none; CI then accepts
-    # this job as skipped.
+    # The plan has no browser test only when test selection chose none; CI then accepts this job
+    # as skipped.
     if: needs.browser-plan.outputs.none != 'true'
     runs-on: >-
       ${{ github.repository == 'Pomerado/pomerado'
@@ -432,17 +431,17 @@ jobs:
           path: test-results/browser-results.json
           retention-days: 7
           if-no-files-found: ignore
-  # Test selection (tools/test-map.ts). On every pull request this job records which test files
-  # the change needs, from the newest test map main's test-map.yml built, and the report job
-  # compares that with the results. Neither job is in CI's `needs`, so recording never decides a
-  # run. Only while the repository variable TEST_SELECTION_ENFORCE is `true` do the check job and
-  # the browser plan select the same way themselves and run only those test files; their guard then
-  # fails a run whose selection tests nothing for a change beyond documentation. Pushes to main
-  # always run every test, as does a pull request labelled `ci:full`, from its next push, since a
-  # re-run keeps the labels of the run it repeats. TEST_SELECTION_DISABLED=true turns it all off.
+  # Test selection (tools/test-map.ts). On a pull request the check job and the browser plan each
+  # select, from the newest test map main's test-map.yml built, the test files the change needs and
+  # run only those; their guard fails a run whose selection tests nothing for a change beyond
+  # documentation, and anything the map can't attribute runs every test. This job records the
+  # selection and its reasons, and the report job the results' test-seconds; neither is in CI's
+  # `needs`. Pushes to main always run every test, as does a pull request labelled `ci:full`, from
+  # its next push, since a re-run keeps the labels of the run it repeats. The repository variable
+  # TEST_SELECTION_DISABLED=true turns selection off, so every pull request runs every test again.
   # A pull request never builds a map; tools/test-map-select.sh reads it from a trusted run.
   test-selection:
-    name: Test selection (shadow)
+    name: Test selection
     if: github.event_name == 'pull_request' && vars.TEST_SELECTION_DISABLED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -471,7 +470,7 @@ jobs:
           path: selection.json
           retention-days: 30
   test-selection-report:
-    name: Test selection report (shadow)
+    name: Test selection report
     needs: [test-selection, check, browser]
     if: always() && needs.test-selection.result == 'success'
     runs-on: ubuntu-latest
@@ -503,7 +502,7 @@ jobs:
           retention-days: 30
   # `CI` is one status for the whole run. It fails unless every job it needs succeeded, so a
   # skipped or cancelled job never passes for a green one. Add every new job to `needs`, except
-  # test selection's shadow jobs, which never decide a run.
+  # test selection's record jobs, which never decide a run.
   ci:
     name: CI
     if: always()
