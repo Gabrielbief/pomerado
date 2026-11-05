@@ -185,7 +185,10 @@ export class FileRefused extends Data.TaggedError("FileRefused")<{
   readonly dispatched?: true;
 }> {
   override get message() {
-    return `The host refused the file: ${this.reason}`;
+    const refused = `The host refused the file: ${this.reason}`;
+    return this.reason === "unknown_reference"
+      ? `${refused}. Only files sent with the request can be used, so another file needs a new request that includes it.`
+      : refused;
   }
 }
 
