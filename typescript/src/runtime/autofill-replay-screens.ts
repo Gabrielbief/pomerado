@@ -309,7 +309,8 @@ const shows = <E>(hooks: Pick<AutofillHooks<E>, "inspect">, step: AutofillStep) 
  * A sign-in whose screens all sit on the page it opened, as one in a dialog, never leaves that
  * address, so no page off the screens can show it went past them (`landedCantTell`). Once the
  * login's password or code went in, a wait for a screen that asks for nothing secret, such as a
- * prompt the site showed once, may end there instead: the page can't tell on the address every
+ * prompt the site showed once, with no secret or approval recorded after it (`later`), may end
+ * there instead: the page can't tell on the address every
  * recorded screen shares (`cantTellInPlace`) and shows none of the recorded screens' fields, no
  * password box and no code box. The page's shape (`pageState`, else its address), unchanged
  * `landingSettleMs`, then reads as its landing, and the last check decides as for a page off the
@@ -319,6 +320,7 @@ const inPlaceShape = <E extends YieldableError, V extends string>(
   input: Pick<AutofillReplayInput<E, V>, "hooks" | "recipe" | "entryUrl">,
   progress: ScreenWaitProgress<V>,
   awaited: AutofillStep,
+  later: readonly AutofillRecipeStep[],
   here: AutofillSignedInCheck,
   screens: ReplayScreens,
   resolve: (request: AutofillStepRequest) => AutofillStep,
@@ -326,6 +328,10 @@ const inPlaceShape = <E extends YieldableError, V extends string>(
   Effect.gen(function* () {
     const { hooks, recipe } = input;
     if (
+      later.some(
+        (recorded) =>
+          recorded.approval !== undefined || recorded.fields.some((field) => "slot" in field),
+      ) ||
       hooks.confirmCantTell === undefined ||
       !progress.anythingSent ||
       !progress.ran.some((step) => step.fields.some((field) => provesLogin(field.slot))) ||
@@ -515,7 +521,7 @@ export const makeReplayScreenWait = <
         left.off = stillOff(left.off, leftSignIn(here.url) ? here.url : undefined, at);
         inPlace = stillOff(
           inPlace,
-          yield* inPlaceShape(input, progress, step, here, screens, resolve),
+          yield* inPlaceShape(input, progress, step, later, here, screens, resolve),
           at,
         );
         const landedInPlace = inPlace !== undefined && at - inPlace.since >= landingSettleMs;

@@ -29,7 +29,7 @@ export const stillOff = (previous: OffScreens | undefined, url: string | undefin
  * sign-in in a dialog that never leaves the page it opened on: no address change can show it went
  * past its screens.
  */
-export const onSharedEntry = <S>(
+const onSharedEntry = <S>(
   steps: readonly S[],
   matches: (page: string, recorded: S) => boolean,
   entryUrl: string,
