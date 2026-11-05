@@ -5682,11 +5682,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         (result.cause.error.code === "ReviewUnavailable" &&
                           result.cause.error.reviewDispatch === "not_sent"));
                     // The host stopped after the dispatch fence but before anything reached the
-                    // site, such as a sandbox copy of the source that did not match the review:
-                    // no write went out, so none is tracked, fenced or reconciled.
+                    // site, such as a sandbox copy of the source that did not match the review,
+                    // or a host check that says so with `nothingSent`: no write went out, so none
+                    // is tracked, fenced or reconciled.
                     const hostNotSent =
                       Cause.isFailType(result.cause) &&
-                      result.cause.error.execution?.dispatch === "not_sent";
+                      (result.cause.error.execution?.dispatch === "not_sent" ||
+                        result.cause.error.nothingSent === true);
                     const ran = crossedDispatchBoundary && !hostNotSent;
                     const lost: ExecutionEvidence = {
                       executionId: `unresolved_${randomUUID()}`,
