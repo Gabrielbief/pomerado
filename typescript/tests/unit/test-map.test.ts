@@ -101,6 +101,7 @@ describe("select", () => {
       ".github/workflows/check.yml",
       "tools/test-map-trace.ts",
       "tools/test-map-select.sh",
+      "tools/browser-shards.ts",
     ])
       expect(pick([modified(path)]).mode).toBe("full");
     expect(pick([modified("typescript/src/only-b.ts")], { map: undefined }).mode).toBe("full");
@@ -176,7 +177,7 @@ describe("select", () => {
       unit: [unitB],
     });
     const wholeRepository: TestMap = { ...map, folders: { "**": [1] } };
-    expect(pick([added("tools/new-tool.ts")], { map: wholeRepository })).toMatchObject({
+    expect(pick([added("examples/new-example.ts")], { map: wholeRepository })).toMatchObject({
       mode: "selected",
       unit: [unitA],
     });

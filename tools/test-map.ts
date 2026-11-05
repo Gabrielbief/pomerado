@@ -84,7 +84,7 @@ export interface Selection {
 /** More changed files than this select everything. */
 export const maxChangedFiles = 300;
 
-/** Paths whose change selects everything: the toolchain, manifests, test setup and CI. */
+/** Paths whose change selects everything: the toolchain, manifests, test setup, CI and its tools. */
 const runsEverything = [
   /^package\.json$/u,
   /^pnpm-lock\.yaml$/u,
@@ -97,7 +97,9 @@ const runsEverything = [
   /^playwright[^/]*\.config\.ts$/u,
   /^\.github\/workflows\//u,
   /^\.github\/actions\//u,
-  /^tools\/test-map[^/]*$/u,
+  // Every tool, since CI runs several (the browser shard planner, the scans, the workflow and
+  // protocol checks) outside any test, and a tool's change must run the jobs that use it.
+  /^tools\//u,
 ];
 
 /** Documentation, which no test needs unless the map records one reading it. */
