@@ -233,7 +233,8 @@ const makespan = (runs: readonly { readonly seconds: number }[], workers: number
  * Splits the tests into shards. Playwright runs a shard's tests in file order, each on the next
  * free worker, so a long test late in that order ends well after the rest. Each unit, longest
  * first, goes to the shard where the simulated end of its last test is earliest. Ties go by
- * shard number, so every run with the same inputs makes the same plan.
+ * shard number, so every run with the same inputs makes the same plan. A shard left empty, when
+ * fewer shards end as early, is dropped.
  */
 export const plan = (
   tests: readonly TestId[],
@@ -267,7 +268,7 @@ export const plan = (
     shard.lines.sort();
     shard.tests.sort();
   }
-  return { shards, known, total: tests.length };
+  return { shards: shards.filter((shard) => shard.tests.length > 0), known, total: tests.length };
 };
 
 /** The new-side lines that `git diff --unified=0` changes, by file. */

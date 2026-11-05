@@ -170,6 +170,13 @@ describe("browser shards", () => {
     expect(output).not.toContain("about 12 s");
   });
 
+  it("plans no empty shard when fewer shards end as early", () => {
+    // Four workers run the four tests at once, so a second shard would end no earlier.
+    const specs = Array.from({ length: 4 }, (_, index) => ({ file: "a.spec.ts", titles: [`long ${index}`], seconds: 30 }));
+    const { shards } = planShards(specs, recorded(specs), ["--target-seconds", "20", "--workers", "4"]);
+    expect(shards.map((shard) => shard.tests.length)).toEqual([4]);
+  });
+
   it("estimates a test without a recorded duration from its file, and splits by count without durations", () => {
     const old = { file: "a.spec.ts", titles: ["old"], seconds: 30 };
     const added = { file: "a.spec.ts", titles: ["added"] };

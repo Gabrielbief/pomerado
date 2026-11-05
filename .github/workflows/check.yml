@@ -236,7 +236,8 @@ jobs:
         with:
           name: browser-shards
           path: ${{ runner.temp }}/browser-shards/
-          retention-days: 1
+          # A week, so a shard re-run days later still finds its list.
+          retention-days: 7
           overwrite: true
   # The browser tests, in the planned shards. Each shard builds dist/ itself, since the tests run the
   # built package. Every shard runs to the end, so one run reports every failure. A push to main
