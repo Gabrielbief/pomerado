@@ -7,13 +7,18 @@ import { describe, expect, it } from "vitest";
 // Evaluates every job's runs-on in .github/workflows with GitHub's own expression library, for
 // pull requests from forks, outside authors and maintainers, and for pushes. A fork's pull request
 // can edit its own copy of a workflow, so this checks the routes this repository's copy picks, not
-// a security boundary; check.yml's header says what the boundary is.
+// a security boundary; check.yml's header says what the boundary is. Each case evaluates every job
+// of every workflow, including workflows the event doesn't start, so a route holds wherever it is.
 
 const workflows = fileURLToPath(new URL("../../../.github/workflows/", import.meta.url));
 const repository = "Pomerado/pomerado";
 const githubHosted = "ubuntu-latest";
 const fallback = "blacksmith-4vcpu-ubuntu-2404";
-const variables = { CI_RUNNER_MAINTAINER: "maintainer-runner", CI_RUNNER_TRUSTED: "trusted-runner" };
+const variables = {
+  CI_RUNNER_MAINTAINER: "maintainer-runner",
+  CI_RUNNER_TRUSTED: "trusted-runner",
+  CI_MAINTAINERS: '["listed-maintainer"]',
+};
 const associations = [
   "OWNER",
   "MEMBER",
@@ -97,6 +102,7 @@ interface Run {
   readonly ref?: string;
   readonly headRepository?: string;
   readonly association?: string;
+  readonly login?: string;
   readonly vars?: Readonly<Record<string, string>>;
 }
 
@@ -111,6 +117,7 @@ const contextsOf = (run: Run) => ({
             pull_request: {
               head: { repo: { full_name: run.headRepository ?? repository } },
               author_association: run.association ?? "NONE",
+              user: { login: run.login ?? "someone" },
             },
           }
         : {},
@@ -145,6 +152,26 @@ describe("CI runner routing", () => {
   it("runs a pull request from a branch here by anyone but a maintainer on a GitHub-hosted runner", () => {
     for (const association of associations.filter((name) => name !== "OWNER" && name !== "MEMBER")) {
       expect(runnersFor({ event: "pull_request", association })).toEqual(new Set([githubHosted]));
+    }
+  });
+
+  it("runs every job of a listed maintainer's pull request from a fork on a GitHub-hosted runner", () => {
+    for (const association of associations) {
+      expect(
+        runnersFor({ event: "pull_request", headRepository: "listed-maintainer/pomerado", association, login: "listed-maintainer" }),
+      ).toEqual(new Set([githubHosted]));
+    }
+  });
+
+  it("runs a pull request from a branch here by a login CI_MAINTAINERS lists on the maintainer runner", () => {
+    for (const association of associations) {
+      for (const job of routed) {
+        const run = { event: "pull_request", association, login: "listed-maintainer" };
+        expect(runnerFor(job.runsOn, contextsOf(run))).toBe("maintainer-runner");
+        const { CI_MAINTAINERS: _, ...unlisted } = variables;
+        const expected = association === "OWNER" || association === "MEMBER" ? "maintainer-runner" : githubHosted;
+        expect(runnerFor(job.runsOn, contextsOf({ ...run, vars: unlisted }))).toBe(expected);
+      }
     }
   });
 
@@ -201,6 +228,7 @@ describe("CI runner routing", () => {
       expect([...eventPaths].toSorted()).toEqual([
         "github.event.pull_request.author_association",
         "github.event.pull_request.head.repo.full_name",
+        "github.event.pull_request.user.login",
       ]);
       expect(job.runsOn).not.toMatch(/head_ref|inputs\.|matrix\.|env\./);
     }

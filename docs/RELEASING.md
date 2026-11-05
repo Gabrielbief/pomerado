@@ -91,12 +91,12 @@ The [Check workflow](../.github/workflows/check.yml) picks each job's runner fro
 | Run | `check` and browser jobs | Every other job |
 | --- | --- | --- |
 | A pull request from a fork | GitHub-hosted | GitHub-hosted |
-| A pull request from a branch here by an author whose association is not `OWNER` or `MEMBER`, such as a bot | GitHub-hosted | GitHub-hosted |
-| A pull request from a branch here by an organization owner or member | `vars.CI_RUNNER_MAINTAINER` | GitHub-hosted |
+| A pull request from a branch here by a maintainer | `vars.CI_RUNNER_MAINTAINER` | GitHub-hosted |
+| A pull request from a branch here by anyone else, such as a bot | GitHub-hosted | GitHub-hosted |
 | A push to `main`, through the Release workflow, or a merge queue run | `vars.CI_RUNNER_TRUSTED` | GitHub-hosted |
 | A run in another repository that calls `check.yml` | GitHub-hosted | GitHub-hosted |
 
-An unset variable falls back to a Blacksmith runner. Set a variable to a runner label to move those jobs, and delete it to move them back. Standard GitHub-hosted runners are free for public repositories, and their `ubuntu-latest` has 4 vCPUs, as the browser job's `--workers=4` expects. Jobs that hold a secret, such as the canary publish, the promotion and the failure alert, always run on GitHub-hosted runners, which give every job a fresh machine.
+A maintainer is an author GitHub reports with the association `OWNER` or `MEMBER`, or one whose login the `CI_MAINTAINERS` variable lists, as a JSON array such as `["octocat"]`. GitHub reports an organization member whose membership is private as a contributor, so list them there. An unset variable falls back to a Blacksmith runner. Set a variable to a runner label to move those jobs, and delete it to move them back. Standard GitHub-hosted runners are free for public repositories, and their `ubuntu-latest` has 4 vCPUs, as the browser job's `--workers=4` expects. Jobs that hold a secret, such as the canary publish, the promotion and the failure alert, always run on GitHub-hosted runners, which give every job a fresh machine.
 
 This routing is not a security boundary. A fork's pull request runs its own copy of the workflow, so it can name any runner label. Every outside contributor's runs wait for a maintainer's approval, and the maintainer checks changes to `.github/`, `package.json` and the lockfile before approving. A self-hosted runner that either variable names must also enforce its route on its own side:
 

@@ -1,8 +1,10 @@
 # Runners. Each job's runs-on picks its runner from GitHub's facts about the run:
 # - A pull request from a fork, or from any author who isn't a maintainer, runs on a GitHub-hosted
 #   runner. So does a run outside this repository, since other repositories can call this file.
-# - A pull request from a branch of this repository by a maintainer (an owner or member of the
-#   organization) runs on the runner the CI_RUNNER_MAINTAINER repository variable names.
+# - A pull request from a branch of this repository by a maintainer runs on the runner the
+#   CI_RUNNER_MAINTAINER repository variable names. A maintainer is an author GitHub reports as an
+#   owner or member, or whose login the CI_MAINTAINERS variable lists, as a JSON array. GitHub
+#   reports a member whose organization membership is private as a contributor, so list them.
 # - A push to main, through the release workflow, and a merge queue run use the runner the
 #   CI_RUNNER_TRUSTED variable names.
 # An unset variable falls back to a Blacksmith runner. The scans and the `CI` job are short and
@@ -100,7 +102,8 @@ jobs:
       && (vars.CI_RUNNER_TRUSTED || 'blacksmith-4vcpu-ubuntu-2404')
       || github.repository == 'Pomerado/pomerado' && github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
-      && contains(fromJSON('["OWNER", "MEMBER"]'), github.event.pull_request.author_association)
+      && (contains(fromJSON('["OWNER", "MEMBER"]'), github.event.pull_request.author_association)
+      || contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.event.pull_request.user.login))
       && (vars.CI_RUNNER_MAINTAINER || 'blacksmith-4vcpu-ubuntu-2404')
       || 'ubuntu-latest' }}
     timeout-minutes: 10
@@ -179,7 +182,8 @@ jobs:
       && (vars.CI_RUNNER_TRUSTED || 'blacksmith-4vcpu-ubuntu-2404')
       || github.repository == 'Pomerado/pomerado' && github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
-      && contains(fromJSON('["OWNER", "MEMBER"]'), github.event.pull_request.author_association)
+      && (contains(fromJSON('["OWNER", "MEMBER"]'), github.event.pull_request.author_association)
+      || contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.event.pull_request.user.login))
       && (vars.CI_RUNNER_MAINTAINER || 'blacksmith-4vcpu-ubuntu-2404')
       || 'ubuntu-latest' }}
     timeout-minutes: 15
@@ -228,11 +232,12 @@ jobs:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
           AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
         run: |
           echo "Event $EVENT on $REF."
           if [ "$EVENT" = pull_request ]; then
-            echo "Head in this repository: $SAME_REPOSITORY. Author association: $AUTHOR_ASSOCIATION."
+            echo "Head in this repository: $SAME_REPOSITORY. Author $AUTHOR, association $AUTHOR_ASSOCIATION."
           fi
       - name: Require every job to succeed
         env:
