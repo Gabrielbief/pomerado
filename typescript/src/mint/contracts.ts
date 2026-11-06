@@ -46,8 +46,9 @@ import {
   privateIdentifierMessage,
   RejectedMarker,
   SecretSlots,
+  isWayMethod,
+  RecipeMethodChoice,
   SignInChoice,
-  SignInMethodChoice,
   stepFieldsFit,
   stepFieldsMessage,
   SubmitKey,
@@ -392,6 +393,16 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   /** Proves this submission stopped before execution; says nothing about prior effects. */
   readonly reviewDispatch?: "not_sent";
   /**
+   * Set by the host on a failed example, act or residual step when nothing of the step reached
+   * the site, such as a host check that refused it at its first commit mark. The harness honors
+   * it only on a failure with no `execution` and no `runnerFailure`, which describe the step's
+   * run themselves. It then tracks no write for the step, as for `execution.dispatch`
+   * `not_sent`, so the repeat guard lets it run again; the minter hears the failure as it would
+   * without it. It is the host's word alone, and the harness infers it from nothing: a host never
+   * sets it on a step that may have sent anything.
+   */
+  readonly nothingSent?: true;
+  /**
    * Why a maintenance recovery gate refused: its reason, what it expected and what it got, and
    * the earliest time a retry can pass it, so the agent fixes or waits instead of guessing.
    */
@@ -729,15 +740,17 @@ export const SignInStep = Schema.Union(
      */
     submitKey: Schema.optional(SubmitKey),
     /**
-     * A two-factor method choice: every method the screen offers, each with the control that
-     * picks it, and `submit` the one to pick now. A method chosen from a native select names that
-     * select and the value it lists for the method (`option`), and the step names the one to pick
-     * now as its own `option`. Runs pick again from these.
+     * A method choice: every method the screen offers, each with the control that picks it, and
+     * `submit` the one to pick now. A method chosen from a native select names that select and the
+     * value it lists for the method (`option`), and the step names the one to pick now as its own
+     * `option`. Runs pick again from its two-factor methods. A way in, `password` beside a code
+     * the site sends or an `identifier_` kind a control switches the screen to, has a control of
+     * its own, and runs keep the one this sign-in picks.
      */
     methods: Schema.optional(
       Schema.Array(
         Schema.Struct({
-          method: SignInMethodChoice,
+          method: RecipeMethodChoice,
           selector: SignInSelector,
           option: Schema.optional(MethodOption),
         }),
@@ -806,6 +819,24 @@ export const SignInStep = Schema.Union(
         step.choice === undefined ||
         (step.fields.length === 0 && step.submit !== undefined && step.methods === undefined),
       { message: () => "a choice step fills no field and names one submit, with no method choice" },
+    ),
+    Schema.filter(
+      (step) => {
+        const methods = step.methods ?? [];
+        const ways = methods.filter((method) => isWayMethod(method.method));
+        return (
+          ways.every(
+            (way) =>
+              way.option === undefined &&
+              methods.filter((method) => method.selector === way.selector).length === 1,
+          ) &&
+          (!ways.some((way) => way.method === "password") || ways.length < methods.length)
+        );
+      },
+      {
+        message: () =>
+          "a way in is its own control, with no option, and a method choice that lists password lists a code method too",
+      },
     ),
   ),
   Schema.Struct({

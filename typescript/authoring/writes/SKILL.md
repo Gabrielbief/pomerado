@@ -177,6 +177,9 @@ During the session:
   Prefer running this check before the step's commit mark, so a mismatch stops the step before
   it sends anything. A free-text value the page rewrote is kept, as the next bullet says. Never
   read back a field filled with a secret handle.
+  Prefer confirming a pick from the site's own selected state, or from a shorter display read as
+  the whole-word start of the whole option, over comparing it with a piece the script cut from
+  the option.
 - Read each typed value back once its field settles, before the step's commit. When the site
   rewrote it as it was typed or on leaving the field, such as an address it standardized, or
   offered exactly one suggestion for it, take the site's version, as you would a picked

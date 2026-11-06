@@ -956,6 +956,15 @@ describe("the publication policy", () => {
     expect(policy).not.toContain("  ");
   });
 
+  // A site's choice longer than an option label holds reaches the caller shortened, and the review
+  // refused the tool for not showing the site's full text, a fix it said only the host could make,
+  // though the question's prompt can hold that text.
+  it("counts a shortened label with the full text in the prompt only for a choice too long for one", () => {
+    const rule =
+      "An option label holds at most 256 characters. Only when a site's choice is longer than that, a label shortened to fit, with the choice's full text in the question's prompt, counts as showing the site's full text. For a `site_field`, the host adds that full text to the prompt itself. A choice that fits keeps its full text in its label.";
+    expect(guardianPublicationPolicy).toContain(`which no input could name beforehand. ${rule}\n`);
+  });
+
   // A caller's place, venue or company name matches in its usual forms, so neither the review of
   // a live step nor the publication review asks a tool to require an exact match.
   it("gives the execution and publication reviews the same fuzzy proper-noun rule", () => {
@@ -1119,6 +1128,15 @@ describe("the publication policy", () => {
       "For any other input, the fix is to throw InputNotApplied with the requested and applied value, or InvalidInput with the values the site offers when it does not offer the caller's value. Neither the description nor an answer in trusted_authority.answeredQuestions excuses it. A write that follows the site's preselected substitute for an option the page doesn't offer is no finding when the caller's own task, in trusted_request.intent or a caller-confirmed update in trusted_authority.taskUpdates, asks for whatever the site ends up with and the output returns the value the site used; nothing the minter wrote, in notes, observations, source or the definition, such as an output field or its description, counts as that ask. When the site shows no results,",
     );
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
+  });
+
+  // A read-back that compares the page with a part the script cut from a picked option, such as
+  // its text before the first comma, refuses a correct pick whenever the page shows more of the
+  // option. It joins the list of checks that would reject a correct write.
+  it("finds a read-back against a part the script cut from a picked option", () => {
+    expect(guardianPublicationPolicy).toContain(
+      "and any other difference; or a read-back that compares what the page shows for a picked option with a part the script cut from that option, instead of the whole option or the site's own selected state. It is a confirmation finding too when a read-back before the final commit",
+    );
   });
 
   // A caller's number limit beyond a stepped scale's end, or between its steps, can still be
