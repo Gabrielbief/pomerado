@@ -2762,6 +2762,14 @@ export interface MintDependencies {
    * it.
    */
   readonly websiteLoginPreAuthorized?: true;
+  /**
+   * A read repair hands an unanswered question back to the minter as no answer even while it is
+   * signed in or holds a login. A read repair can't write, and no answer is still never consent.
+   * Every other rule for an unanswered question stands. Without it, any question left unanswered
+   * while the build is signed in or holds a login ends the build as before. A core without it
+   * ignores it.
+   */
+  readonly handBackSignedInReadRepair?: true;
   /** See `MintTurn.autofillSignIn`. */
   readonly autofillSignIn?: true;
   /**
