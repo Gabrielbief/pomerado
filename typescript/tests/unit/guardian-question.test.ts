@@ -234,7 +234,28 @@ it("allows a blocked report that names the caller input at fault and why", async
     ),
   );
   expect(reviewPolicyOf(requests[0])).toContain(
-    'or when it asks the user for anything; the agent then revises or withdraws it. A report that starts "Caller input error:" is allowed when it names the input value at fault and why the site cannot fulfil it, in the site\'s own words where the site showed any. Saying what kind of value would work, such as a future date or a neighborhood the site lists, is part of that reason, not a request to the user.',
+    'or when it asks the user for anything; the agent then revises or withdraws it. A report that starts "Caller input error:" is allowed when it names the input value at fault and why the site cannot fulfil it, in the site\'s own words where the site showed any.',
+  );
+  expect(reviewPolicyOf(requests[0])).toContain(
+    " Saying what kind of value would work, such as a future date or a neighborhood the site lists, is part of that reason, not a request to the user.",
+  );
+});
+
+// A repair reported that the caller's value broke a limit the published tool's own input
+// description states, an email the tool only checks and never changes. The question review
+// reworded it into lifting that limit through the site's change control, and the repair then
+// rewrote the tool to change the email.
+it("allows a caller-input report whose reason is a limit the tool's input description states", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      { ...question, blockedOutcome: true },
+      unreadable,
+    ),
+  );
+  expect(reviewPolicyOf(requests[0])).toContain(
+    " in the site's own words where the site showed any. The reason may also be a limit the published tool's input description states for that input, such as a value the tool only checks and never changes; prefer allowing such a report over asking the agent to lift that limit, which changes what the tool does. Saying what kind of value would work,",
   );
 });
 
@@ -413,6 +434,47 @@ it("gives the question review the publication finding a question is about, and r
   // A code the policy does not list still decodes, as other, rather than failing the review.
   const reworded = await Effect.runPromise(guardian.reviewQuestion(pending, candidate, unreadable));
   expect(reworded.decision).toMatchObject({ outcome: "reword", label: "other" });
+});
+
+// A confirm question for a site change the request already named was reworded as already
+// authorized, because the review never heard that the host itself refused the change until the
+// caller confirms it.
+it("gives the question review the host's record of a change it refused until the caller confirms it", async () => {
+  const hostConfirmation = {
+    changes: [
+      { setting: "site", origin: "https://app.example.test" },
+      { setting: "login", change: "sign_in" },
+    ],
+  } as const;
+  const requests = scripted([
+    [message({ outcome: "allow_business", rationale: "The host needs this yes." })],
+  ]);
+  const candidate = await Effect.runPromise(
+    questionForReview(
+      {
+        questions: [
+          {
+            id: "move_site",
+            type: "confirm",
+            prompt: "Build the tool on https://app.example.test, where the sign-in landed?",
+          },
+        ],
+      },
+      { credentialsAvailable: false, hostConfirmation },
+      (text) => Effect.succeed(text),
+    ),
+  );
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      candidate,
+      unreadable,
+    ),
+  );
+  const input = JSON.parse(userText(requests[0])) as {
+    question_review: { hostConfirmation?: unknown };
+  };
+  expect(input.question_review.hostConfirmation).toEqual(hostConfirmation);
 });
 
 // A blocked report that cited an earlier denial was judged without it: the denial survived only in

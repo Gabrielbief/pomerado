@@ -40,11 +40,22 @@ import {
   type CredentialTypingMode,
   type InsertionRefusal,
 } from "./credential-keyboard.js";
-import { DateOfBirthFormat } from "./autofill-contracts.js";
+import { DateOfBirthFormat, IdentifierKinds } from "./autofill-contracts.js";
 import { PageControls } from "./page-controls.js";
 import { PageNavigation, reportedNavigation } from "./sign-in-redirect.js";
 
 const isDateOfBirthFormat = Schema.is(DateOfBirthFormat);
+const isIdentifierKind = Schema.is(IdentifierKinds);
+
+/**
+ * A box a sign-in's fill typed an identifier into: its slot, the value it typed, and the mark its
+ * focus call left on that very node, in the host's isolated world, which page code never sees.
+ */
+export interface TypedBox {
+  readonly slot: FillSlot;
+  readonly value: string;
+  readonly mark: string;
+}
 
 /** One fill call's answer: a control that moved, an empty field the host typed, or its own. */
 const FillAnswer = Schema.Union(
@@ -60,16 +71,27 @@ const FillAnswer = Schema.Union(
   }),
   Schema.Struct({
     focused: Schema.Boolean,
-    /** Why the field did not take the focus: the error focusing threw, or the tag that holds it. */
+    /**
+     * Why the field did not take the focus: the error focusing threw, the tag that holds it, or
+     * that the field takes no typing yet, which the call never focused.
+     */
     unfocused: Schema.optional(
       Schema.Union(
         Schema.Struct({ focusError: Schema.String }),
         Schema.Struct({ activeTag: Schema.String }),
+        Schema.Struct({ editable: Schema.Literal(false) }),
       ),
     ),
     located: Schema.optional(FoundIn),
     url: Schema.String,
     /** When the primary page's document began loading, read once the field took the focus. */
+    document: Schema.optional(Schema.Number),
+  }),
+  /** The box still holds what an earlier screen of the sign-in typed into it (`kept`). */
+  Schema.Struct({
+    kept: Schema.Literal(true),
+    located: Schema.optional(FoundIn),
+    url: Schema.String,
     document: Schema.optional(Schema.Number),
   }),
   Schema.Struct({
@@ -82,8 +104,11 @@ const FillAnswer = Schema.Union(
   Schema.Struct({
     /** `disabled`: the submit was disabled, so the call clicked nothing. */
     submit: Schema.Literal("clicked", "failed", "disabled", "none"),
-    /** A `clicked` submit the call pressed from the keyboard. */
-    via: Schema.optional(Schema.Literal("keyboard")),
+    /**
+     * A `clicked` submit the call pressed from the keyboard, or clicked through the site's own
+     * control laid over it with its name (`click_layer`).
+     */
+    via: Schema.optional(Schema.Literal("keyboard", "click_layer")),
     url: Schema.String,
     navigated: Schema.optional(PageNavigation),
     controls: Schema.optional(PageControls),
@@ -209,6 +234,12 @@ interface FillProgress {
   /** Whether any value may have reached the page. */
   typed: boolean;
   /**
+   * The host began putting a value in, so some of it may have reached the page even when the
+   * insertion was refused or its answer lost. Evidence then names only what it would once
+   * anything was typed (`evidenceOrigins`).
+   */
+  keyed?: true;
+  /**
    * The fields the next call checks still hold something: the one the host typed last, or every
    * field it typed before a submit it clicks again.
    */
@@ -226,6 +257,8 @@ interface FillProgress {
   typedIn: number | undefined;
   /** The origins `trustSignInUrl` trusted as the host judged again a control the page moved. */
   readonly trusted: Set<string>;
+  /** The sign-in's typed boxes as this fill began (`typedBoxes`): earlier screens' only. */
+  readonly earlier: readonly TypedBox[];
 }
 
 /** The report's `trustedSignInOrigins`, when the fill's own judgments trusted any. */
@@ -355,11 +388,12 @@ const guardOrigins = (input: CallInput) =>
   namedAfterTyping(input.inspection) ?? judgedOrigins(input.inspection);
 
 /**
- * The origins a refusal's evidence may name: any until something was typed into the page, then
- * only the guard's (`guardOrigins`), since page code may have put a typed value in another.
+ * The origins a refusal's evidence may name: any until the host began putting a value into the
+ * page (`keyed`), then only the guard's (`guardOrigins`), since page code may have put a typed
+ * value in another.
  */
 const evidenceOrigins = (input: CallInput, progress: FillProgress) =>
-  progress.typed || input.inspection.judgedBeforeTyping !== undefined
+  progress.typed || progress.keyed === true || input.inspection.judgedBeforeTyping !== undefined
     ? guardOrigins(input)
     : undefined;
 
@@ -384,15 +418,56 @@ interface CallInput {
 interface FillInput extends CallInput {
   readonly values: readonly string[];
   /**
+   * Runs once, after every field of a step that names a submit control (`submit`) went in and
+   * before the host's first submit call, with the document the host typed the last field in
+   * (`typedIn`: when it began loading, undefined when no call read it), so a host may hold the
+   * submit while a page that judges how it was used finishes judging. Never for a step with only a
+   * submit key or no submit, a fill that stopped before its submit, a click again
+   * (`resubmitAutofillStep`), or a second click in the same fill (a retype by keys after
+   * `stayed_disabled`, a dismiss then a second click). It gets no value. When it fails, the host
+   * clicks nothing (`heldSubmit`): one look reports `page` when the page sent what was typed
+   * itself; otherwise the fill reports the submit `refused` with the failure's detail.
+   */
+  readonly beforeSubmit?: (typed: {
+    readonly document: number | undefined;
+  }) => Effect.Effect<void, Error>;
+  /**
    * Every value the host typed earlier in this sign-in on this browser, in any step: a clicked
    * submit reports where the page went (`navigated`) only when it is set and nothing the page
    * chose holds one of these or `values` (`reportedNavigation`). A first screen's is empty.
    */
   readonly typedBefore?: readonly string[];
+  /**
+   * The open sign-in's record of the identifier boxes its fills typed, which this fill reads and
+   * adds to. A box an earlier fill of the sign-in typed the same value into, that still holds
+   * something on the same document, is kept: the fill neither empties nor types it, since a page
+   * may take a changed identifier as a fresh start, and reports it `filled`. Without it, every
+   * box is emptied and typed.
+   */
+  readonly typedBoxes?: TypedBox[];
   readonly keyboard: CredentialKeyboard;
-  /** How each value is typed; `paste` by default. */
+  /**
+   * How each value is typed; `paste` by default. `keyboard` presses a trusted key per character
+   * (`InsertionOptions.trustedKeys`), the retype below included, for every slot but the
+   * `pastedSlots`: a one-time code too, one key into each box of a code split across boxes. A
+   * step's one code field that hands the focus on once a key went in gets the code at once instead
+   * (`codeAtOnce`).
+   */
   readonly typing?: CredentialTypingMode;
 }
+
+/**
+ * The slots `typing: "keyboard"` still pastes, since their boxes commonly reformat or move on as a
+ * person types: a phone number, a card's number and expiry, and a date of birth. Every other slot
+ * is typed key by key, a one-time code included: one key into each box of a code split across
+ * boxes, as a person types it, each box focused and checked before its key.
+ */
+const pastedSlots: ReadonlySet<FillSlot | undefined> = new Set<FillSlot>([
+  "phone",
+  "card_number",
+  "card_expiry",
+  "date_of_birth",
+]);
 
 /**
  * The host's judgment of the controls a call found changed, by inspection's rule, where only a
@@ -726,10 +801,28 @@ const submitWhenEnabled = (
   });
 
 /**
+ * How long the host waits for the page to switch on a field that takes no typing yet, as a page
+ * that switches each box of a split code on only once the one before it holds a digit does, and
+ * how often it calls again meanwhile.
+ */
+const codeBoxEnableMs = 2_000;
+const codeBoxPollMs = 100;
+
+/** A focus call that found its field takes no typing yet, and so focused nothing. */
+const switchedOff = (answered: Either.Either<CallAnswer, Error>) =>
+  Either.isRight(answered) &&
+  "unfocused" in answered.right &&
+  answered.right.unfocused !== undefined &&
+  "editable" in answered.right.unfocused;
+
+/**
  * One field: a date's call fills it; any other field's call focuses it and binds its original node/document/frame; the host inserts its
  * value atomically. Undefined when the fill goes on to the next field, else the step's report.
  * The focus call of the first of the step's code boxes (`boxes`) first empties every box that
- * still holds something (`emptyBoxes`).
+ * still holds something (`emptyBoxes`). A field that takes no typing yet, as only a later box of a
+ * split code may at this point (`untrustedTarget`), gets the focus call again every
+ * `codeBoxPollMs` for up to `codeBoxEnableMs`, and is refused as `not_editable` when it stays so.
+ * The changes those calls find count across the wait.
  */
 const fillField = (
   input: FillInput,
@@ -747,19 +840,30 @@ const fillField = (
         : isDateOfBirthFormat(field.format)
           ? field.format
           : "YYYY-MM-DD";
-    const answered = yield* fillCall(
-      input,
-      progress,
-    )(
+    // An identifier the sign-in keeps a record for: the box an earlier screen typed it into.
+    const tracked = input.typedBoxes !== undefined && isIdentifierKind(field?.slot) && value !== "";
+    const mark = tracked ? `__pomerado_typed_${randomUUID()}` : undefined;
+    const kept = tracked
+      ? progress.earlier.findLast((box) => box.slot === field?.slot && box.value === value)
+      : undefined;
+    const call: AutofillFillCall =
       format === undefined
         ? {
             kind: "focus",
             index,
             bindingKey,
             ...(index === boxes[0] ? { emptyBoxes: boxes } : {}),
+            ...(mark === undefined ? {} : { mark }),
+            ...(kept === undefined ? {} : { kept: kept.mark }),
           }
-        : { kind: "date", index, iso: value, format },
-    );
+        : { kind: "date", index, iso: value, format };
+    const changes = { count: 0 };
+    const started = Date.now();
+    let answered = yield* fillCall(input, progress, changes)(call);
+    while (switchedOff(answered) && Date.now() - started < codeBoxEnableMs) {
+      yield* Effect.sleep(codeBoxPollMs);
+      answered = yield* fillCall(input, progress, changes)(call);
+    }
     if (answered._tag === "Left")
       return failedCall(progress, answered.left, {
         ...(format === undefined ? {} : { held: input.values }),
@@ -769,13 +873,14 @@ const fillField = (
     if ("refusal" in answer || "checked" in answer)
       return stopped(input.step, progress, answer, "field");
     progress.check = [];
-    return yield* afterFieldCall(input, progress, index, answer, bindingKey);
+    return yield* afterFieldCall(input, progress, index, answer, bindingKey, mark);
   });
 
 /**
  * A field that did not take the focus, or whose native insertion refused (`insertion`, its finite
  * cause), and why. A private answer's question that changed is a change on the screen, as when the
- * call found it changed before focusing.
+ * call found it changed before focusing. A field that still takes no typing once the host's wait
+ * ran out is `not_editable`, as inspection refuses one.
  */
 const untypedRefusal = (
   input: FillInput,
@@ -783,8 +888,14 @@ const untypedRefusal = (
   index: number,
   answer: Extract<CallAnswer, { readonly focused: boolean }>,
   insertion: InsertionRefusal | undefined,
-) =>
-  withCheck(
+) => {
+  if (answer.unfocused !== undefined && "editable" in answer.unfocused)
+    return withCheck(refused("not_editable", index), "not_editable", {
+      control: progress.judged.fields[index]?.control,
+      ...targetEvidence(progress.judged.fields[index], evidenceOrigins(input, progress)),
+      ...foundEvidence(answer.url, answer.located, evidenceOrigins(input, progress)),
+    });
+  return withCheck(
     refused("credential_target_refused", index),
     insertion === undefined
       ? "not_focused"
@@ -799,16 +910,70 @@ const untypedRefusal = (
       ...foundEvidence(answer.url, answer.located, evidenceOrigins(input, progress)),
     },
   );
+};
 
-/** What a field's own call found: a date filled, or a focused field the host now types. */
+/**
+ * Whether the code typed by trusted keys into the step's one code field was refused because the
+ * page moved the focus on from it (`codeAtOnce`), as a row of one-character boxes does from its
+ * first box once a key went in, when the step names only that box. A row the step names box by
+ * box, any other slot and any other refusal are not.
+ */
+const focusLeftCodeField = (input: FillInput, index: number, insertion: InsertionRefusal) =>
+  insertion === "focus_moved" &&
+  input.typing === "keyboard" &&
+  input.step.fields[index]?.slot === "code" &&
+  input.step.fields.filter((field) => field.slot === "code").length === 1 &&
+  Array.from(input.values[index] ?? "").length > 1;
+
+/**
+ * The step's one code field, whose page moved the focus on once a trusted key went in
+ * (`focusLeftCodeField`), gets the whole code inserted at once, as before codes were typed: a
+ * focus call binds the field again, with every check a field's own focus call makes, after it
+ * found the field holds what the keys typed (`check`), and empties it; the host then inserts the
+ * code atomically (`insertAtOnce`), guarded as it always was. `untyped` when the field holds
+ * nothing, so no key went in and the refusal stands. Otherwise what that call and insertion found,
+ * as for any field.
+ */
+const codeAtOnce = (
+  input: FillInput,
+  progress: FillProgress,
+  index: number,
+): Effect.Effect<AutofillStepReport | undefined | "untyped"> =>
+  Effect.gen(function* () {
+    const bindingKey = `__pomerado_autofill_${randomUUID()}`;
+    progress.check = [index];
+    const answered = yield* fillCall(input, progress)({ kind: "focus", index, bindingKey });
+    progress.check = [];
+    if (answered._tag === "Left") return failedCall(progress, answered.left, { mayMutate: false });
+    const answer = answered.right;
+    if ("checked" in answer) return "untyped";
+    if ("refusal" in answer) return stopped(input.step, progress, answer, "field");
+    return yield* afterFieldCall(input, progress, index, answer, bindingKey, undefined, true);
+  });
+
+/**
+ * What a field's own call found: a date filled, a box kept as an earlier screen typed it, or a
+ * focused field the host now types. A typed identifier joins the sign-in's record under `mark`.
+ * `atOnce` inserts the value at once whatever the typing (`codeAtOnce`).
+ */
 const afterFieldCall = (
   input: FillInput,
   progress: FillProgress,
   index: number,
   answer: Exclude<CallAnswer, Stop | { readonly checked: false }>,
   bindingKey: string,
+  mark: string | undefined,
+  atOnce = false,
 ): Effect.Effect<AutofillStepReport | undefined> =>
   Effect.gen(function* () {
+    if ("kept" in answer) {
+      // It holds the value this sign-in typed on this document, so the next call checks it.
+      progress.typed = true;
+      progress.typedIn = answer.document;
+      progress.statuses.push("filled");
+      progress.check = [index];
+      return undefined;
+    }
     if ("dated" in answer) {
       // A date's call may have changed the field even when it failed.
       progress.typed = true;
@@ -822,6 +987,8 @@ const afterFieldCall = (
     let insertion: InsertionRefusal | undefined;
     if (answer.focused) {
       const value = input.values[index] ?? "";
+      const slot = input.step.fields[index]?.slot;
+      progress.keyed = true;
       const typing = yield* Effect.either(
         input.keyboard.insertText(
           {
@@ -830,7 +997,12 @@ const afterFieldCall = (
             documentOrigin: progress.judged.fields[index]?.documentOrigin ?? "",
           },
           value,
-          input.step.fields[index]?.slot === "phone" ? { phone: true } : undefined,
+          {
+            ...(slot === "phone" ? { phone: true } : {}),
+            ...(input.typing === "keyboard" && !pastedSlots.has(slot) && !atOnce
+              ? { trustedKeys: true }
+              : {}),
+          },
         ),
       );
       if (typing._tag === "Left") {
@@ -865,6 +1037,7 @@ const afterFieldCall = (
         progress.typedIn = answer.document;
         progress.statuses.push("filled");
         progress.check = [index];
+        if (mark !== undefined && slot !== undefined) input.typedBoxes?.push({ slot, value, mark });
         return undefined;
       }
       // The phone went in, but the field kept other digits: the host types and clicks nothing more.
@@ -876,6 +1049,10 @@ const afterFieldCall = (
         return typing.right === "changed" ? report : cutShortAt(report, index);
       }
       insertion = typing.right;
+      if (!atOnce && focusLeftCodeField(input, index, insertion)) {
+        const inserted = yield* codeAtOnce(input, progress, index);
+        if (inserted !== "untyped") return inserted;
+      }
     }
     const refusal = untypedRefusal(input, progress, index, answer, insertion);
     if (!progress.typed) return refusal;
@@ -887,8 +1064,11 @@ const afterFieldCall = (
  * Fills the values into the step's fields, in order, and clicks its submit, on the stable primary tab or its inspected authentication popup,
  * judging every control again before each call acts. Kernel calls
  * focus and bind each field and click; the host inserts each value atomically into that original
- * node over its own encrypted DevTools socket (`keyboard`), so no value but a date of birth ever enters a Kernel call's script text or
- * its request to Kernel's REST API. It reports per-field outcomes and never a
+ * node over its own encrypted DevTools socket (`keyboard`), or with `typing: "keyboard"` presses a
+ * trusted key per character into it there for each slot but the `pastedSlots`, a one-time code
+ * included, one key per box of a code split across boxes, and inserts at once a code whose one
+ * field hands the focus on once a key went in, binding that field again first (`codeAtOnce`), so no value but a
+ * date of birth ever enters a Kernel call's script text or its request to Kernel's REST API. It reports per-field outcomes and never a
  * value. Once anything was typed, a call that fails or finds a control refused can no longer say
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
  * fails that field, and one refused before the click, or a submission refused as it fires, refuses
@@ -896,7 +1076,8 @@ const afterFieldCall = (
  * ran on it, and what the step filled may have gone out. A submit the page keeps disabled is never
  * clicked: the host waits for the page to enable it once the fields are filled. When it stays
  * disabled after the host typed a field, the host types every field again key by key
- * (`InsertionOptions.keys`), for a page that enables it only on key presses, and waits once more.
+ * (`InsertionOptions.keys`, and trusted keys again for a slot `keyboard` types), for a page that
+ * enables it only on key presses, and waits once more.
  * When it still stays disabled the report says so (`stayed_disabled`). A step whose code the host
  * typed one character per box into several code fields is submitted only once every box holds
  * exactly one character; otherwise that box fails and the submit is not attempted. A phone field is
@@ -928,7 +1109,11 @@ const afterFieldCall = (
  * submits refuses the submit as before.
  * A step that names `dismiss` clicks that covering notice's own control first, when the page shows
  * it, and refuses the step with nothing typed when it is no such control (`dismissNotice`). A
- * click another element caught, which never reached the submit, is `blocked`, with that element
+ * click the site's own control over the submit caught, one with the submit's own accessible name
+ * in its closest form or dialog that holds no field, is clicked through it: the host clicks the
+ * submit's centre with the mouse, as a person does, and reports it `clicked` with
+ * `via: "click_layer"`. Any other click another element caught, which never reached the submit,
+ * is `blocked`, with that element
  * (`blockedBy`): nothing was sent and the fields still hold what was typed, so the minter can name
  * the element's own control as `dismiss` and send the screen again (`resubmitAutofillStep`), which
  * presses the submit from the keyboard only when its click is caught again. On a step that names
@@ -941,8 +1126,6 @@ const afterFieldCall = (
 export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
     const { step } = input;
-    if (input.typing === "keyboard")
-      return withCheck(refused("typing_unavailable"), "typing_unavailable");
     const crossing = crossingSelector(step);
     if (crossing !== undefined)
       return withCheck(refused("selector_unsupported", crossing), "selector_unsupported");
@@ -955,6 +1138,7 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
       typedAt: randomUUID(),
       typedIn: undefined,
       trusted: new Set(),
+      earlier: [...(input.typedBoxes ?? [])],
     };
     const notice = yield* dismissNotice(input, progress);
     if (notice.refusal !== undefined) return notice.refusal;
@@ -962,6 +1146,10 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
     for (let index = 0; index < step.fields.length; index++) {
       const ended = yield* fillField(input, progress, index, boxes);
       if (ended !== undefined) return ended;
+    }
+    if (input.beforeSubmit !== undefined && step.submit !== undefined) {
+      const held = yield* Effect.either(input.beforeSubmit({ document: progress.typedIn }));
+      if (Either.isLeft(held)) return yield* heldSubmit(input, progress, boxes, held.left);
     }
     const typed =
       input.typedBefore === undefined ? undefined : [...input.typedBefore, ...input.values];
@@ -996,7 +1184,10 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
  * Clicks again the submit of a step whose fill the host reported `blocked`, typing nothing: the
  * fields still hold what that fill typed. It clicks the step's `dismiss` first, when the page shows
  * it, and refuses with nothing clicked when it is no covering notice's own control
- * (`dismissNotice`), or a control is gone or moved where the host refuses it. Then each field the
+ * (`dismissNotice`), or a control is gone or moved where the host refuses it. A dismiss that
+ * emptied the fields before its click left nothing typed to send: the first field the fill typed
+ * fails and the submit is not attempted, with no further call, so a page whose own code navigates
+ * a moment after the dismiss cannot make the report uncertain. Then each field the
  * fill typed must still hold something (lengths only, never a value), and each box of a code split
  * across one-character boxes exactly one character, or that field fails and the submit is not
  * attempted; otherwise the submit is judged, guarded and clicked as the fill's own was, with no
@@ -1004,8 +1195,8 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
  * catches again, as one the dismiss did not clear or one with nothing to dismiss, such as a fixed
  * footer, is pressed from the keyboard instead: the host focuses that same submit and presses Enter
  * on it, only once focus landed on it, under the same guard, and reports it `clicked` with
- * `via: "keyboard"`; the element over it is never clicked. When focus goes anywhere else it is
- * `blocked` again.
+ * `via: "keyboard"`; the element over it is never clicked, unless it is the site's own control
+ * over the submit, as a fill clicks it. When focus goes anywhere else it is `blocked` again.
  */
 export const resubmitAutofillStep = (input: CallInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
@@ -1023,10 +1214,18 @@ export const resubmitAutofillStep = (input: CallInput): Effect.Effect<AutofillSt
       typedAt: randomUUID(),
       typedIn: undefined,
       trusted: new Set(),
+      earlier: [],
     };
     const notice = yield* dismissNotice(input, progress);
     if (notice.refusal !== undefined) return notice.refusal;
     progress.check = typedFields(step, progress);
+    // Nothing typed is left to send: the first typed field fails as the submit's check would find
+    // it, with no call for the page's own navigation after the dismiss to lose.
+    const [emptiedField] = progress.check;
+    if (notice.emptied === true && emptiedField !== undefined) {
+      progress.statuses[emptiedField] = "failed";
+      return filledReport(step, progress, "not_attempted", notice.url ?? "");
+    }
     const codeFields = step.fields.flatMap((field, index) => (field.slot === "code" ? [index] : []));
     return yield* submitStep(
       input,
@@ -1041,6 +1240,40 @@ export const resubmitAutofillStep = (input: CallInput): Effect.Effect<AutofillSt
 const byKeys = (keyboard: CredentialKeyboard): CredentialKeyboard => ({
   insertText: (target, text, options) => keyboard.insertText(target, text, { ...options, keys: true }),
 });
+
+/**
+ * A fill whose host's `beforeSubmit` failed (`error`): the host clicks nothing. It looks once,
+ * clicking nothing either, and a look that was lost or found the fields gone from the document
+ * the host typed in looks again for up to the step's send wait (`awaitNewDocument`). A look that
+ * finds the page sent what was typed itself, as a form that submits itself on its last input
+ * does, reports `page`. Otherwise the fill reports the submit `refused`, with the failure's detail.
+ */
+const heldSubmit = (
+  input: FillInput,
+  progress: FillProgress,
+  boxes: readonly number[],
+  error: Error,
+) =>
+  Effect.gen(function* () {
+    const call = submitCall(input, progress, boxes);
+    const look: AutofillFillCall = call.kind === "submit" ? { ...call, look: true } : call;
+    const changes = { count: 0 };
+    const first = yield* fillCall(input, progress, changes)(look);
+    const answered =
+      Either.isLeft(first) || leftOnly(first)
+        ? yield* awaitNewDocument(input, progress, look, first, sendWindow(input), changes)
+        : first;
+    const answer = Either.isRight(answered) ? answered.right : undefined;
+    if (answer !== undefined && "pageSent" in answer)
+      return filledReport(input.step, progress, "page", answer.url);
+    return filledReport(input.step, progress, "refused", answer?.url ?? "", {
+      ...refused("page_unavailable", "submit"),
+      failureDetail: failureDetail("autofill_step_failed", {
+        operation: "autofill.before_submit",
+        error,
+      }),
+    });
+  });
 
 /** The first of the step's selectors that reaches into another frame, its `dismiss` included. */
 const crossingSelector = (step: AutofillStep<FillSlot>) =>
@@ -1069,7 +1302,7 @@ const typedFields = (step: AutofillStep<FillSlot>, progress: FillProgress) =>
  * whose click failed or whose answer was lost clicks nothing that sends, so the fill goes on.
  * `dismissed` says whether the call clicked it, and `emptied` whether it emptied the step's fields
  * first, as it does before a click whose submission it cancels, so what was typed must be typed
- * again.
+ * again; `url` is the page's address once the call ended.
  */
 const dismissNotice = (
   input: CallInput,
@@ -1077,6 +1310,7 @@ const dismissNotice = (
 ): Effect.Effect<{
   readonly dismissed: boolean;
   readonly emptied?: true;
+  readonly url?: string;
   readonly refusal?: AutofillRefusal;
 }> =>
   Effect.gen(function* () {
@@ -1098,6 +1332,7 @@ const dismissNotice = (
     return {
       dismissed: answer.dismiss === "clicked",
       ...("emptied" in answer && answer.emptied === true ? { emptied: true as const } : {}),
+      url: answer.url,
     };
   });
 

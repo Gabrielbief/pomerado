@@ -1,8 +1,7 @@
-import type { InputRequest, Question } from "../runtime/input-request.js";
-import {
-  longestLabel,
-  type ScriptQuestionDeclaration,
-  type ScriptQuestionDeclarations,
+import { longestPrompt, type InputRequest, type Question } from "../runtime/input-request.js";
+import type {
+  ScriptQuestionDeclaration,
+  ScriptQuestionDeclarations,
 } from "../runtime/script-input.js";
 
 // The host's check that a running script asks only what publication reviewed. The questions come
@@ -41,7 +40,7 @@ const keepsBounds: Readonly<
   // choice the caller answers from the page's options alone, never another kind.
   site_field: (question, declaration) =>
     declaration.type === "site_field" &&
-    question.prompt.length <= longestLabel &&
+    question.prompt.length <= longestPrompt &&
     ((question.type === "text" && question.maxLength === undefined) ||
       (question.type === "choice" && question.allowOther !== true && question.allowNote !== true)),
 };

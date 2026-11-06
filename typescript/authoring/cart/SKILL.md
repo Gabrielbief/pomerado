@@ -43,11 +43,14 @@ by this many".
 Read the cart's lines before the write, in the session and in the composed script; never
 assume the cart starts empty. Afterwards, confirm from the cart itself that the line reached
 the expected quantity (the earlier quantity plus the input, or the input) and that every other
-line is unchanged, then return the lines as read and call `verified()`. After the tool's final
-commit, a line that changed to another quantity than expected, such as one the site capped, is
-still the written line: call `verified()` and list it in `saved_differences` (writes skill). A
-checkout reads the lines it is about to buy before its commit and returns them with the
-confirmation.
+line is unchanged, then return the lines as read and call `verified()`. When comparing lines
+before and after, such as to list other lines that changed, prefer comparing
+`unit_price_minor` with `unit_price_minor` and `line_total_minor` with `line_total_minor` (core
+skill, output fields), so a line's quantity, new or above one, doesn't read as a price change.
+After the tool's final commit, a line that changed to another quantity than expected, such as
+one the site capped, is still the written line: call `verified()` and list it in
+`saved_differences` (writes skill). A checkout reads the lines it is about to buy before its
+commit and returns them with the confirmation.
 
 ## Values the account lacks
 
@@ -83,5 +86,6 @@ completed the write, so it never publishes.
 ## Description
 
 The description states the decisions a caller needs to use the tool right (the publication
-skill): that it acts on the signed-in account's cart or checks out as a guest, whether
+skill): that it acts on the signed-in account's cart, checks out as a guest or starts its own
+guest cart that lives only inside one run, which no later call or person must find, whether
 quantity adds or sets, what it returns, and what it leaves out, such as placing the order.

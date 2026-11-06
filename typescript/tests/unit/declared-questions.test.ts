@@ -313,8 +313,8 @@ describe("a site-field question", () => {
     expect(as({ maxLength: 10 })).toBe(false);
     expect(as({ type: "choice", options: [{ id: "o1", label: "A" }], allowOther: true })).toBe(false);
     expect(as({ type: "choice", options: [{ id: "o1", label: "A" }], allowNote: true })).toBe(false);
-    expect(as({ prompt: "l".repeat(256) })).toBe(true);
-    expect(as({ prompt: "l".repeat(257) })).toBe(false);
+    expect(as({ prompt: "l".repeat(2000) })).toBe(true);
+    expect(as({ prompt: "l".repeat(2001) })).toBe(false);
   });
 
   it("still refuses an ordinary undeclared ask, and an ordinary question asked by another prompt", () => {

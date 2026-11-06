@@ -90,6 +90,27 @@ export interface QuestionFinding {
   readonly explanation: string;
 }
 
+/**
+ * One change the host refused until the caller confirms it, by its setting and its new origin or
+ * value, as the minter proposed it in `mint_update`.
+ */
+export type HostConfirmationChange =
+  | { readonly setting: "site"; readonly origin: string }
+  | {
+      readonly setting: "login";
+      readonly change: "sign_in" | "different_login" | "signed_out";
+    }
+  | { readonly setting: "effect"; readonly effect: "write" };
+
+/**
+ * The host's record that it refused a `mint_update` changing the site, the login or the effect
+ * (`confirmation_required`) until the caller confirms it. The host takes no address or wording in
+ * the request as that confirmation.
+ */
+export interface HostConfirmation {
+  readonly changes: readonly HostConfirmationChange[];
+}
+
 /** One offered option as the caller sees it: the full label, and the masked one the API shows. */
 interface ReviewedOption {
   readonly label: string;
@@ -160,6 +181,11 @@ export interface PendingQuestion {
    * so the review can allow a question asking the owner to choose between the fixes it permits.
    */
   readonly finding?: QuestionFinding;
+  /**
+   * Host fact: the change of the site, the login or the effect the host refused until the caller
+   * confirms it, so the review can tell a question the host needs from one trusted intent settles.
+   */
+  readonly hostConfirmation?: HostConfirmation;
 }
 
 /** A confirm question that asks the owner to confirm the step execution review `reviewId` held. */
@@ -199,6 +225,7 @@ export const questionForReview = <E>(
     readonly buildEffect?: "read" | "write";
     readonly confirms?: readonly ConfirmedStepQuestion[];
     readonly finding?: QuestionFinding;
+    readonly hostConfirmation?: HostConfirmation;
   },
   screen: (text: string) => Effect.Effect<string, E>,
 ): Effect.Effect<PendingQuestion, E> =>
@@ -279,6 +306,10 @@ export const questionForReview = <E>(
               explanation: facts.finding.explanation,
             },
           }),
+      // Settings, origins and fixed values the harness decoded from the update: nothing to screen.
+      ...(facts.hostConfirmation === undefined
+        ? {}
+        : { hostConfirmation: facts.hostConfirmation }),
     };
   });
 

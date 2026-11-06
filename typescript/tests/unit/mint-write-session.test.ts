@@ -16,6 +16,20 @@ import {
   type WriteSessionMarks,
 } from "../../src/mint/write-session.js";
 
+// A free-form JSON value, which Effect writes as a definition that refers to itself.
+type Json = string | number | boolean | null | readonly Json[] | { readonly [key: string]: Json };
+const JsonData: Schema.Schema<Json> = Schema.suspend(
+  (): Schema.Schema<Json> =>
+    Schema.Union(
+      Schema.String,
+      Schema.Number,
+      Schema.Boolean,
+      Schema.Null,
+      Schema.Array(JsonData),
+      Schema.Record({ key: Schema.String, value: JsonData }),
+    ),
+).annotations({ identifier: "JsonData" });
+
 describe("an act step's commit evidence", () => {
   it("reads the runner's own marks", () => {
     expect(commitEvidenceOf([])).toBe("undeclared");
@@ -338,6 +352,15 @@ describe("a write session's publication check", () => {
       expect(Exit.isSuccess(check([confirmed], placing).result)).toBe(true);
     });
 
+    it("reads the refusals beside a recursive type in another property", () => {
+      const detailed = (status: Schema.Schema.AnyNoContext) =>
+        contractJsonSchema(
+          Schema.Union(Schema.Struct({ ...placed(status).fields, details: JsonData }), refusals),
+        );
+      expect(Exit.isSuccess(publish(detailed(Schema.Literal("placed"))))).toBe(true);
+      expect(reason(publish(detailed(Schema.String)))).toBe("refusal_unreadable");
+    });
+
     it("never refuses a republish for the unreadable refusal its published revision has", () => {
       expect(Exit.isSuccess(publish(unreadable, unreadable))).toBe(true);
       expect(reason(publish(unreadable, readable))).toBe("refusal_unreadable");
@@ -413,6 +436,25 @@ describe("a write session's publication check", () => {
           refusal: { reason: "not_offered" },
         }),
       );
+    });
+
+    it("publishes on the refusal when the output holds a recursive type in another branch", () => {
+      const detailed = Schema.Struct({ ...quoted.fields, details: JsonData });
+      const published = Effect.runSyncExit(
+        checkWriteSession({
+          session: { steps: [refusedFirst] },
+          step: refusedFirst,
+          extract: Effect.succeed({
+            ...allUnproven,
+            outputSchema: contractJsonSchema(Schema.Union(detailed, declined)),
+          }),
+          writePath: path,
+          publishOnRefusal: true,
+        }),
+      );
+      expect(Exit.isSuccess(published) && published.value.refusal).toEqual({
+        reason: "not_offered",
+      });
     });
   });
 });

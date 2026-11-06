@@ -72,7 +72,10 @@ first:
   did not return is refused (`contract_output_mismatch`). Values the request needs are required
   and non-null: never loosen one. Only a record whose own page shows no such value may return
   null, together with a field saying why; a description never excuses a nullable needed value,
-  and Guardian refuses a schema that makes one optional or nullable. No output is a constant
+  and Guardian refuses a schema that makes one optional or nullable. The one write exception: when
+  the commit's own response or page shows the write went through, and a later read-back of that
+  same record shows it cancelled, refunded or deleted, a value that read-back can no longer show
+  may be optional, and the field's description says so. No output is a constant
   where the page shows a value, and titles and names are returned in full (core skill, output
   fields).
 - **Typed output.** Prefer parsing what the page shows into typed fields over returning a
@@ -140,6 +143,10 @@ first:
     failure");
   - every applied filter or option is read back from the page as the value the site applied,
     such as the chosen option's label, never `true` ("Applied without readback");
+  - a value chosen in a typeahead, combobox, dropdown, chip input or lookup dialog goes through
+    `pickValue` or `pickValues`, or `chooseOption` where the control takes no typing (forms skill);
+    review sends back a picker of the tool's own unless `pickValue` failed on that control and the
+    code says what the page showed ("Own picker");
   - a requested value the site does not offer throws `InvalidInput` with the site's choices, and
     one the page ignored throws `InputNotApplied` unless it tailors the answer (core skill) or is
     a search query the site corrected, returned with `applied_query` and `query_corrected` (search

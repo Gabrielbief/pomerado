@@ -8,7 +8,10 @@ import { Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Deferred, Effect, Fiber } from "effect";
 import { afterEach, expect, it } from "vitest";
+import { cardReadbackRefusal } from "../../src/mint/card-readback.js";
 import { MintFailure } from "../../src/mint/contracts.js";
+import { fileHandleRefusal } from "../../src/mint/file-handles.js";
+import { fileReadbackRefusal } from "../../src/mint/file-readback.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
 import { autofillRefusalFailure } from "../../src/mint/sign-in-failure.js";
 import { portableMintProjection } from "../support/portable-mint.js";
@@ -176,6 +179,10 @@ it("ends a build whose site is temporarily down as site_unavailable", async () =
   );
   expect(offered).toContain("site_unavailable when the site is temporarily down for the failing input");
   expect(offered).toContain("never a 5xx answer only to the request the tool made");
+  // One record the site can't offer now, or an optional part's control failing, is no outage.
+  expect(offered).toMatch(
+    /is the site's answer for that record, not an outage.*is not the site being down: prefer leaving that part/,
+  );
   expect(f.requests).toHaveLength(1);
 });
 
@@ -499,6 +506,268 @@ it.each([
     expect(outcome).not.toHaveProperty("blocked");
     expect(lastResult(f.requests[3 + publish.length])).toContain("host_not_refused");
   }
+});
+
+const liveStep = { target: "liveBrowser" };
+const guardianExecutionDenial = new MintFailure({
+  code: "ReviewDenied",
+  review: {
+    outcome: "deny",
+    reviewId: "review_denied",
+    rationale: "The step reads a file the host keeps.",
+  },
+});
+
+// A host source rule, such as a placed or downloaded file's bytes staying with the host, refuses
+// a step before it runs, as `unsupported`. The minter's host_refused report was refused as
+// host_not_refused, so the build could end only under another reason, such as the site lacking
+// the capability. Core's own refusal by such a rule now stands, naming the rule. Guardian's denial
+// of the step, and an unsupported answer the minter can fix, such as a misplaced handle, do not.
+it.each([
+  {
+    basis: "the file read-back rule",
+    refusal: fileReadbackRefusal(
+      new Map([["explore/export.mjs", "const reader = new FileReader();"]]),
+      liveStep,
+      false,
+    ),
+    rule: "file_readback",
+  },
+  {
+    basis: "the card read-back rule",
+    refusal: cardReadbackRefusal(
+      new Map([["explore/check.mjs", "await page.screenshot();"]]),
+      liveStep,
+      true,
+    ),
+    rule: "card_readback",
+  },
+  {
+    basis: "a misplaced file handle",
+    refusal: fileHandleRefusal(
+      new Map([["explore/upload.mjs", 'await files.place("{{file.f1}}");']]),
+      liveStep,
+    ),
+    rule: undefined,
+  },
+  {
+    basis: "a file refusal that names the file API to use",
+    refusal: fileReadbackRefusal(
+      new Map([["explore/save.mjs", "await download.saveAs(target);"]]),
+      liveStep,
+      false,
+    ),
+    rule: undefined,
+  },
+  { basis: "Guardian", refusal: guardianExecutionDenial, rule: undefined },
+] as const)(
+  "ends as host_refused after $basis refused an execution: $rule",
+  async ({ refusal, rule }) => {
+    expect(refusal).toBeDefined();
+    const explanation = "A host rule refused the only step that returns the files.";
+    const f = await fixture(
+      (_request, index) =>
+        [
+          call("execute", { ...pureExample, target: "liveBrowser" }, "refused"),
+          call("report_blocked", { reason: "host_refused", explanation }, "report"),
+        ][index] ?? prose("Stopping."),
+      {
+        reviewAndExecute: () =>
+          refusal instanceof MintFailure
+            ? Effect.fail(refusal)
+            : Effect.succeed({
+                executionId: "execution_refused",
+                status: "unsupported" as const,
+                effect: "not_sent" as const,
+                observations: refusal,
+              }),
+      },
+    );
+    const outcome = await f.run();
+    if (rule === undefined) {
+      expect(outcome).not.toHaveProperty("blocked");
+      expect(lastResult(f.requests[2])).toContain("host_not_refused");
+      return;
+    }
+    expect(f.requests).toHaveLength(2);
+    expect(outcome).toMatchObject({
+      build: "incomplete",
+      blocked: { reason: "host_refused", explanation },
+      stopReason: "host_refused",
+    });
+    expect(blockedRecord(outcome)).toMatchObject({
+      hostRefusals: [{ source: "source_rule", rule }],
+    });
+  },
+);
+
+// A challenge or bot check on the site that the host recorded and could not get past leaves the
+// build no step it can run there, and the minter's host_refused report was refused while it tried
+// again on every new browser. The report stands on the host's record of it
+// (`hostChallengeRefused`), naming the challenge as its basis; with none on record it is refused.
+it.each([
+  { recorded: true, ends: true },
+  { recorded: false, ends: false },
+])("ends as host_refused on a challenge the host recorded: $ends", async ({ recorded, ends }) => {
+  const explanation = "The site's bot check stopped every browser, so nothing could be tested.";
+  const f = await fixture(
+    (_request, index) =>
+      [call("report_blocked", { reason: "host_refused", explanation }, "report")][index] ??
+      prose("Stopping."),
+    { hostChallengeRefused: () => recorded },
+  );
+  const outcome = await f.run();
+  if (ends) {
+    expect(f.requests).toHaveLength(1);
+    expect(outcome).toMatchObject({
+      build: "incomplete",
+      blocked: { reason: "host_refused", explanation },
+      stopReason: "host_refused",
+    });
+    expect(blockedRecord(outcome)).toMatchObject({ hostRefusals: [{ source: "challenge" }] });
+  } else {
+    expect(outcome).not.toHaveProperty("blocked");
+    expect(lastResult(f.requests[1])).toContain("host_not_refused");
+  }
+});
+
+// A download over the host's own file caps is the host's limit, which no change to the source gets
+// past. A repair's host_refused report was refused as host_not_refused, so its minter could stop
+// only by asking the owner to narrow the request. The failed example now names the cap, and the
+// report stands on it at once, naming the cap as its basis.
+it.each([
+  { limit: "file", cap: { limit: "file", maxBytes: 26_214_400 } },
+  { limit: "run", cap: { limit: "run", maxBytes: 52_428_800, maxFiles: 10 } },
+] as const)(
+  "ends a repair as host_refused on a download over the host's $limit cap",
+  async ({ cap }) => {
+    const explanation = "The file is over the host's download cap, so it cannot be returned.";
+    const f = await fixture(
+      (_request, index) =>
+        [
+          call("execute", { ...pureExample, target: "liveBrowser" }, "example"),
+          call("report_blocked", { reason: "host_refused", explanation }, "report"),
+        ][index] ?? prose("Stopping."),
+      {
+        reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
+          beforeDispatch(readAllow).pipe(
+            Effect.as({
+              executionId: "execution_over_cap",
+              status: "failed" as const,
+              effect: "possible" as const,
+              observations: { message: "The downloaded file is over the host's cap." },
+              fileCap: cap,
+            }),
+          ),
+      },
+      { mode: "maintenance", observations: { failure: "The file did not come back." } },
+    );
+    const outcome = await f.run();
+    // The report ends the build: no answer to it goes back to the minter, such as host_not_refused.
+    expect(f.requests.length > 2 ? resultOf(f.requests[2], "report") : undefined).toBeUndefined();
+    expect(outcome).toMatchObject({
+      build: "incomplete",
+      blocked: { reason: "host_refused", explanation },
+      stopReason: "host_refused",
+    });
+    expect(blockedRecord(outcome)).toMatchObject({
+      hostRefusals: [{ source: "file_cap", ...cap }],
+    });
+    expect(f.requests).toHaveLength(2);
+    expect(resultOf(f.requests[1], "example")).toMatchObject({
+      fileCap: { ...cap, instruction: expect.stringContaining("host_refused") },
+    });
+    expect(JSON.stringify(resultOf(f.requests[1], "example"))).toContain(`${cap.maxBytes} bytes`);
+  },
+);
+
+// A download cap refusal stands only until a later example settles without it: one that ran past
+// the cap, or failed for another reason such as a selector that matched nothing, leaves a report
+// on that example no host refusal to stand on.
+it.each([
+  {
+    later: "completed",
+    evidence: {
+      executionId: "execution_after_cap",
+      status: "completed" as const,
+      effect: "verified" as const,
+      resultRef: "protected_result",
+      observations: { value: "public" },
+    },
+  },
+  {
+    later: "failed for another reason",
+    evidence: {
+      executionId: "execution_after_cap",
+      status: "failed" as const,
+      effect: "possible" as const,
+      observations: { message: "The selector never matched." },
+    },
+  },
+] as const)(
+  "refuses host_refused once a later example $later after a download over the cap",
+  async ({ evidence }) => {
+    let executions = 0;
+    const f = await fixture(
+      (_request, index) =>
+        [
+          call("execute", { ...pureExample, target: "liveBrowser" }, "capped"),
+          call("execute", { ...pureExample, target: "liveBrowser" }, "later"),
+          call("report_blocked", { reason: "host_refused", explanation: "Too big." }, "report"),
+        ][index] ?? prose("Stopping."),
+      {
+        repeatableRead: true,
+        reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
+          beforeDispatch(readAllow).pipe(
+            Effect.as(
+              executions++ === 0
+                ? {
+                    executionId: "execution_over_cap",
+                    status: "failed" as const,
+                    effect: "possible" as const,
+                    observations: { message: "The downloaded file is over the host's cap." },
+                    fileCap: { limit: "file", maxBytes: 26_214_400 },
+                  }
+                : evidence,
+            ),
+          ),
+      },
+      { mode: "maintenance", observations: { failure: "The file did not come back." } },
+    );
+    const outcome = await f.run();
+    expect(resultOf(f.requests[3], "report")).toMatchObject({
+      status: "blocked_refused",
+      reason: "host_not_refused",
+    });
+    expect(outcome).not.toHaveProperty("blocked");
+  },
+);
+
+// A failed example with no cap refusal on record is no host refusal: the report is still refused.
+it("refuses host_refused after a failed download the host did not refuse over its caps", async () => {
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...pureExample, target: "liveBrowser" }, "example"),
+        call("report_blocked", { reason: "host_refused", explanation: "Too big." }, "report"),
+      ][index] ?? prose("Stopping."),
+    {
+      reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(readAllow).pipe(
+          Effect.as({
+            executionId: "execution_failed",
+            status: "failed" as const,
+            effect: "possible" as const,
+            observations: { message: "The downloaded file is over the host's cap (too_large)" },
+          }),
+        ),
+    },
+    { mode: "maintenance", observations: { failure: "The file did not come back." } },
+  );
+  const outcome = await f.run();
+  expect(resultOf(f.requests[1], "example")).not.toHaveProperty("fileCap");
+  expect(outcome).not.toHaveProperty("blocked");
+  expect(lastResult(f.requests[2])).toContain("host_not_refused");
 });
 
 /** What an accepted ending's `phase: "blocked"` diagnostic says the host refusal stood on. */
@@ -1501,6 +1770,7 @@ const hostRefusedAfter = (
   steps: readonly (object | MintFailure)[],
   then: {
     readonly update?: boolean;
+    readonly readBack?: boolean;
     readonly publish?: boolean;
     readonly before?: { readonly update: true; readonly guardianDenied: true };
   } = {},
@@ -1520,6 +1790,9 @@ const hostRefusedAfter = (
             ]),
         ...steps.map((_, step) => call("execute", authenticate, `sign_in_${step}`)),
         ...(then.update === true ? moveSite : []),
+        ...(then.readBack === true
+          ? [call("execute", { ...pureExample, target: "liveBrowser" }, "read_back")]
+          : []),
         ...(then.publish === true
           ? [call("execute", pureExample, "example"), call("finish_build", finishBuild, "finish")]
           : []),
@@ -1530,6 +1803,22 @@ const hostRefusedAfter = (
       ][index] ?? prose("Stopping."),
     {
       reviewAndExecute: (submitted, beforeDispatch = () => Effect.void) => {
+        // A live step other than the sign-in reads a file back, refused before it runs.
+        if (
+          submitted.purpose !== "authenticate" &&
+          "target" in submitted &&
+          submitted.target === "liveBrowser"
+        )
+          return Effect.succeed({
+            executionId: "execution_read_back",
+            status: "unsupported" as const,
+            effect: "not_sent" as const,
+            observations: fileReadbackRefusal(
+              new Map([["explore/export.mjs", "const reader = new FileReader();"]]),
+              liveStep,
+              false,
+            ),
+          });
         if (submitted.purpose !== "authenticate")
           return beforeDispatch({ reviewId: "review_example", action: "read" }).pipe(
             Effect.as({
@@ -1562,6 +1851,7 @@ const hostRefusedAfter = (
 };
 const refusedFormRecord = { source: "sign_in_step", code: "AutofillRefused", check: "destination" };
 const refusedUpdateRecord = { source: "task_update", reason: "change_unsupported" };
+const refusedReadBackRecord = { source: "source_rule", rule: "file_readback" };
 const refusedPublicationRecord = {
   source: "publication",
   code: "PublicationUnavailable",
@@ -1569,7 +1859,8 @@ const refusedPublicationRecord = {
 };
 
 // While the sign-in never confirmed, a host refusal apart from it keeps a host_refused report's
-// reason: a sign-in form the host refused after the login went out, or a site change it refused.
+// reason: a sign-in form the host refused after the login went out, a site change it refused, or a
+// step a host source rule refused before it ran.
 // A later publication refusal, which may follow from the unconfirmed sign-in, neither hides it
 // nor ends the build as sign-in unavailable, and the record lists every check still standing.
 it.each([
@@ -1596,6 +1887,12 @@ it.each([
     steps: [submittedScreen],
     then: { update: true, publish: true },
     recorded: [refusedUpdateRecord, refusedPublicationRecord],
+  },
+  {
+    basis: "a step a host source rule refused",
+    steps: [submittedScreen],
+    then: { readBack: true },
+    recorded: [refusedReadBackRecord],
   },
   // The same form refused again after a later login went out is the latest sign-in event again.
   {

@@ -12,11 +12,13 @@ import {
   decodePublicationDecision,
   guardianPublicationPolicy,
   publicationCallerDecisionPolicy,
+  publicationCartPolicy,
   publicationDecisionPolicy,
   publicationPaidChoiceLimit,
   publicationLiveTestsPolicy,
   publicationOutputPolicy,
   publicationSafetyDefaultPolicy,
+  publicationWriteLaterStatePolicy,
 } from "../../src/guardian/publication.js";
 import {
   makeGuardian,
@@ -954,6 +956,15 @@ describe("the publication policy", () => {
     expect(policy).not.toContain("  ");
   });
 
+  // A site's choice longer than an option label holds reaches the caller shortened, and the review
+  // refused the tool for not showing the site's full text, a fix it said only the host could make,
+  // though the question's prompt can hold that text.
+  it("counts a shortened label with the full text in the prompt only for a choice too long for one", () => {
+    const rule =
+      "An option label holds at most 256 characters. Only when a site's choice is longer than that, a label shortened to fit, with the choice's full text in the question's prompt, counts as showing the site's full text. For a `site_field`, the host adds that full text to the prompt itself. A choice that fits keeps its full text in its label.";
+    expect(guardianPublicationPolicy).toContain(`which no input could name beforehand. ${rule}\n`);
+  });
+
   // A caller's place, venue or company name matches in its usual forms, so neither the review of
   // a live step nor the publication review asks a tool to require an exact match.
   it("gives the execution and publication reviews the same fuzzy proper-noun rule", () => {
@@ -961,6 +972,19 @@ describe("the publication policy", () => {
       "A tool matches the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name. Never ask a tool to require an exact match. When more than one option matches a caller's value equally, the tool either takes the first in the site's order and returns the one it used, as the site labels it, or lists them for the caller to choose one, in a question or a refusal whose options each select exactly one of them. Which of the two is the tool's own choice, never a finding or a reason to deny. A tool that takes the first and does not return the one it used is a schema_mismatch finding with reason source_correction.";
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
     expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule}\n`);
+  });
+
+  // A value the caller names, a city or a product name alike, goes through the site's own search.
+  // Matching it only against a menu the page shows, or a list in the source, is a finding; a fast
+  // path that falls back to the search, a fixed list that is the site's only control, or a
+  // signed-in account's saved entries where adding one would save it, is not.
+  it("finds a value matched only against a shown shortlist instead of the site's search", () => {
+    const rule =
+      "Shortlist lookup: source that matches a value the caller names that the site can search, such as a place, business, product, provider or record, only against the options the page already shows, such as a menu of popular choices or every button's text, or against a hard-coded list or alias table, or that throws for a value that list lacks, instead of using the site's own search, when the captures show the site offering one, such as a search box, a typeahead or a button that opens one. The fix is to type the value into that search, or in an HTTP version to send the site's own lookup request, and pick the result that matches, as pickValue does. Trying the shown options first is fine when the code falls back to that search for any other value, and so is an enum of a fixed list that is the site's only control for the value, or a match among the account's saved entries where adding one would save it to the account.";
+    expect(publicationOutputPolicy.split(rule)).toHaveLength(2);
+    // Not places only: the rule names a business or product beside a place, and no place-only
+    // copy of it stays.
+    expect(publicationOutputPolicy).not.toMatch(/Shortlist place|a place the caller gives/u);
   });
 
   // Of several equal matches, taking the first or letting the caller choose is the tool's own
@@ -973,6 +997,17 @@ describe("the publication policy", () => {
     expect(guardianPublicationPolicy.split(`${choice} ${missing}`)).toHaveLength(2);
     expect(publicationFindingCategories).toContain("schema_mismatch");
     expect(publicationReasons).toContain("source_correction");
+  });
+
+  // A cart tool whose own guest cart lives only inside one run may publish signed out, as the cart
+  // skill lets it build: no later call needs that cart. A cart a later call must find still needs
+  // a verified sign-in, and the same-run guest checkout keeps its own clause. Hosts with their own
+  // publication policy get it with publicationCartPolicy.
+  it("lets a cart tool whose own guest cart lives only inside one run publish signed out", () => {
+    const rule =
+      "A cart tool (one that reads, adds to, changes or checks out a cart) runs signed in, unless it fills the cart and places the order in the same run through the site's guest checkout and its description says so, or its description says it starts its own guest cart that lives only inside one run, which no later call or person must find, and the source and trusted evidence agree; without a verified sign-in in trusted_execution_context, any other cart tool is an unsupported_claim finding with reason evidence at the description.";
+    expect(publicationCartPolicy.startsWith(`${rule} `)).toBe(true);
+    expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
   });
 
   // A repair is judged on what it changed: an unchanged line is denied only when a failing run or
@@ -1063,7 +1098,7 @@ describe("the publication policy", () => {
   it("accepts a write confirmed from its own commit request, and refuses a loose check", () => {
     const policy = guardianPublicationPolicy;
     expect(policy).toContain(
-      "perform and return the confirmation or read-back it declares, and never resubmit or commit twice. A second click on a marked step is not a resubmission when the marked call returned `blockingRequiredFields`' fields and the script called `notCommitted` for that step once, after `blockingRequiredFields` returned them and before entering it again, and entered it again once they were answered; a `notCommitted` without that, or a second one for the same step, is a confirmation finding. A `notCommitted` for a step right after the marked call of the step's first click got `unaskable` from `blockingRequiredFields`, followed by `InvalidInput` and no further click, is no finding. Nor is a `notCommitted` for a step right after the site's own answer to its click refused it as a whole and showed nothing was created, such as a commit response reporting an expired quote and no record, followed by a refusal with the site's words, or by one refresh, a check of the fresh quote against the caller's limits and one more entered click. A script that confirms from its commit request is confirming, not missing a read-back: in the same call as the final commit click it waits for the site's response on the route the session's commit used, requires a 2xx or 3xx status and no error in a body it can read, checks the page for an error or validation message (a 201 whose Location names the new record needs no page check), and only then calls verified(). It is a confirmation finding when the script accepts any request or any status, takes a 200 from an endpoint that can report errors in its body without checking that body, or skips the page's error check.",
+      "perform and return the confirmation or read-back it declares, and never resubmit or commit twice. A second click on a marked step is not a resubmission when the marked call returned `blockingRequiredFields`' fields and the script called `notCommitted` for that step once, after `blockingRequiredFields` returned them and before entering it again, and entered it again once they were answered; a `notCommitted` without that, or a second one for the same step, is a confirmation finding. A `notCommitted` for a step right after the marked call of the step's first click got `unaskable` from `blockingRequiredFields`, followed by `InvalidInput` and no further click, is no finding. Nor is a `notCommitted` for a step right after the site's own answer to its click refused it as a whole and showed nothing was created, such as a commit response reporting an expired quote and no record, followed by a refusal, or an `OperationFailure`, with the site's words, or by one refresh, a check of the fresh quote against the caller's limits and one more entered click. A script that confirms from its commit request is confirming, not missing a read-back: in the same call as the final commit click it waits for the site's response on the route the session's commit used, requires a 2xx or 3xx status and no error in a body it can read, checks the page for an error or validation message (a 201 whose Location names the new record needs no page check), and only then calls verified(). It is a confirmation finding when the script accepts any request or any status, takes a 200 from an endpoint that can report errors in its body without checking that body, or skips the page's error check.",
     );
     expect(policy).toContain(
       "'unverifiable' is valid only if the session evidence shows the site offered no commit response the script can check, no confirmation and no read-back.",
@@ -1092,6 +1127,28 @@ describe("the publication policy", () => {
       "For any other input, the fix is to throw InputNotApplied with the requested and applied value, or InvalidInput with the values the site offers when it does not offer the caller's value. Neither the description nor an answer in trusted_authority.answeredQuestions excuses it. A write that follows the site's preselected substitute for an option the page doesn't offer is no finding when the caller's own task, in trusted_request.intent or a caller-confirmed update in trusted_authority.taskUpdates, asks for whatever the site ends up with and the output returns the value the site used; nothing the minter wrote, in notes, observations, source or the definition, such as an output field or its description, counts as that ask. When the site shows no results,",
     );
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
+  });
+
+  // A read-back that compares the page with a part the script cut from a picked option, such as
+  // its text before the first comma, refuses a correct pick whenever the page shows more of the
+  // option. It joins the list of checks that would reject a correct write.
+  it("finds a read-back against a part the script cut from a picked option", () => {
+    expect(guardianPublicationPolicy).toContain(
+      "and any other difference; or a read-back that compares what the page shows for a picked option with a part the script cut from that option, instead of the whole option or the site's own selected state. It is a confirmation finding too when a read-back before the final commit",
+    );
+  });
+
+  // A caller's number limit beyond a stepped scale's end, or between its steps, can still be
+  // applied in a read: the scale's end or the nearest step inside the bound answers it. Refusing
+  // it as invalid input is a wrong failure.
+  it("finds a read's InvalidInput thrown on a number limit a stepped scale can apply", () => {
+    const wrongFailure = publicationOutputPolicy.slice(
+      publicationOutputPolicy.indexOf("Wrong failure:"),
+      publicationOutputPolicy.indexOf("Strict name check:"),
+    );
+    expect(wrongFailure).toContain(
+      "So is a read's InvalidInput thrown because a caller's number limit lies beyond a stepped scale's end or between its steps: prefer setting the scale's end, or the nearest step inside the caller's bound, and returning the applied value.",
+    );
   });
 });
 
@@ -1353,6 +1410,25 @@ describe("the OpenAI publication reviewer", () => {
     });
     expect(policyOf(requests[0])).toContain(publicationCallerDecisionPolicy);
     expect(publicationOutputPolicy).toContain(publicationCallerDecisionPolicy);
+  });
+
+  // A write whose record was cancelled, refunded or deleted after the write went through can no
+  // longer show some needed values. The commit's own evidence and that record's later state, both in
+  // the host's records, let those be optional, never removed. A read, and a write with no such later
+  // state, keep the rule.
+  it("excuses a write's needed value a later cancel, refund or delete left unreadable, on host records only", () => {
+    const loosened = publicationOutputPolicy.slice(
+      publicationOutputPolicy.indexOf("Loosened needed value:"),
+      publicationOutputPolicy.indexOf("Lost information: a fact"),
+    );
+    expect(loosened).toContain(publicationWriteLaterStatePolicy);
+    expect(loosened).toContain(
+      "only a caller-confirmed design decision, below, or a write's record later cancelled, refunded or deleted, as this rule says, does.",
+    );
+    expect(publicationWriteLaterStatePolicy).toContain(
+      "the later read-back never shows the write went through",
+    );
+    expect(publicationWriteLaterStatePolicy).not.toMatch(/left out|removed/);
   });
 
   // One caller's "always" answer must not make a published write take a paid add-on, an upsell,

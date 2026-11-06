@@ -117,6 +117,10 @@ export const guardianReviewInput = (
             ...(turn.pending.questionCandidate.finding === undefined
               ? {}
               : { finding: turn.pending.questionCandidate.finding }),
+            // The change the host refused until the caller confirms it.
+            ...(turn.pending.questionCandidate.hostConfirmation === undefined
+              ? {}
+              : { hostConfirmation: turn.pending.questionCandidate.hostConfirmation }),
             // The confirm questions that ask the owner to confirm a step a review held.
             ...(turn.sources?.heldStepQuestions === undefined
               ? {}

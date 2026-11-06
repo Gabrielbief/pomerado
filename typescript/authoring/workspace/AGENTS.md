@@ -313,8 +313,7 @@ finding's `id`, so Guardian reviews the question against the finding.
 
 When Guardian sends a question back with `question_rejected`, reword it as the rationale says and
 ask again once, with the same question ids. Drop it when the result's `questionNeeded` is false,
-when the rationale says plainly that no question is needed, or when Guardian sends the reworded
-question back too.
+or when the rationale says plainly that no question is needed.
 
 When nobody answers before the question expires, `request_input` returns `no_answer`. Decide
 how to go on without it: continue with a sensible default and list it in `finish_build`
@@ -323,9 +322,10 @@ reason `question_unanswered`, when only the caller's answer would let the build 
 consent: it authorizes no write, sign-in or change of task, and `confirmedBy` never names it. Ask
 again only when the answer is essential: after two questions have gone unanswered, the next one
 left unanswered ends the build.
-Once the build is signed in or holds a login, it is not told no answer: a question left unanswered
-then ends the build, though one left unanswered before the build signed in went back to you. That
-is no reason to narrow the tool without asking. Ask design questions early, while exploring and
+Once the build is signed in or holds a login, a question left unanswered then ends the build,
+though one left unanswered before the build signed in went back to you. That is no reason to
+narrow the tool without asking. A read repair may still get `no_answer` while signed in: go on as
+above. Ask design questions early, while exploring and
 before signing in where you can, and state in each the choice you recommend, so the owner can
 accept it in one step.
 
@@ -373,7 +373,8 @@ invented values supplies them itself, as its answers to your questions. Guardian
 step that types or submits a value none of those supplied, naming the field, except the one
 made-up record key the writes and testing skills allow. Signed out,
 picking one of the page's own options for state a read needs, such as a pickup mode that opens
-the store picker, is part of the read.
+the store picker, is part of the read, and so is picking one for a signed-in session's per-visit
+location.
 
 **Solve before you narrow.** When part of the requested tool proves harder than it looked, such
 as a field, a column type or an option the first version could not write or read back, or a
@@ -443,8 +444,8 @@ authentication. Follow these stages in order:
    the identifier step. Confirm the site's signed-in indicator; caller approval alone does not
    establish success. Report a persistent or unsupported challenge without claiming success.
 4. Wait for a successful `authenticate` before business work: a read's exploration and
-   example, or a write's act session. Never switch accounts or resubmit a private-field
-   submission. If the site still shows a login page or a signed-out state right after
+   example, or a write's act session. Never switch to a different login or resubmit a
+   private-field submission. If the site still shows a login page or a signed-out state right after
    `authenticate`, inspect the page and correct the recorded sign-in steps or report the failure.<!-- pomerado:section agents.authentication --> For a route whose purpose is
    signing in, end the operation by reading an indicator that sign-in worked. Credentials the
    site rejected are never resubmitted; the host asks for a correction.
@@ -629,14 +630,21 @@ never with final text, which the host treats as unfinished work:
   maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's
   code and the caller's input are unchanged. A 5xx answer only to the request your tool made is
   not that evidence, since that request can be wrong. Prefer it over changing the code or over
-  `site_lacks_capability`. Never use it for a bot check or an access-denied page. An outage,
-  maintenance, error or empty page that appears only after the site already served its pages in
-  this attempt, or after a bot check you got past earlier, is reported the same way: report the
-  outage page you see now, not the earlier check. Sites sometimes throttle a browser's network
-  address this way, so a host may give the build a new browser on another address and ask you to
-  try the failing step once more before it ends the build; on a signed-in build that browser
-  starts signed out. Try the step again within your usual rules, and report `site_unavailable`
-  again if the page stays.
+  `site_lacks_capability`. Never use it for a bot check or an access-denied page. A site-wide
+  outage, maintenance, error or empty page that appears only after the site already served its
+  pages in this attempt, or after a bot check you got past earlier, is reported the same way:
+  report the outage page you see now, not the earlier check. Sites sometimes throttle a browser's
+  network address this way, so a host may give the build a new browser on another address and ask
+  you to try the failing step once more before it ends the build; on a signed-in build that
+  browser starts signed out. Try the step again within your usual rules, and report
+  `site_unavailable` again if the page stays. A page for the example's own record that says the
+  site can't offer it right now, or comes back blank, while the site serves its other records, is
+  the site's answer for that record, not an outage: prefer having the tool return it as an
+  explicit state with the site's words and no items over a complete empty list, prove the tool on
+  another record the site lists or ask the caller, and keep building. An error on a control that
+  serves only an optional part of the request is not the site being down: prefer leaving that
+  part as the page shows it, or empty, saying so in the description, and building the rest of the
+  task.
 - `caller_input`: the caller's own request stops the build: what it states conflicts with itself
   or its cited sources, a file it needs is missing, or it rules out going on, such as a stop
   condition it set that cannot be met. Prefer asking with `request_input` for a missing fact the

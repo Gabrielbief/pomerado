@@ -27,6 +27,7 @@ import type {
 } from "../runtime/policy-metadata.js";
 import { Context, Data, Schema, type Effect } from "effect";
 import { commitMarkMaxLength, commitMarkPattern } from "../runtime/operation.js";
+import { DownloadCap } from "../runtime/files.js";
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { SignInVersionFinding } from "./sign-in-version.js";
 import {
@@ -36,6 +37,7 @@ import {
   IdentifierKinds,
   maximumCodeBoxes,
   maximumStepFields,
+  MethodOption,
   PhoneFormat,
   PrivateIdentifierLabel,
   onePrivateIdentifier,
@@ -44,7 +46,9 @@ import {
   privateIdentifierMessage,
   RejectedMarker,
   SecretSlots,
-  SignInMethodChoice,
+  isWayMethod,
+  RecipeMethodChoice,
+  SignInChoice,
   stepFieldsFit,
   stepFieldsMessage,
   SubmitKey,
@@ -70,6 +74,7 @@ import type { SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 import {
   AnsweredQuestion,
   type ConfirmedStepQuestion,
+  type HostConfirmation,
   type QuestionFinding,
   type QuestionDecision,
 } from "../guardian/question.js";
@@ -193,7 +198,12 @@ const ClosedCode = Schema.String.pipe(
  * - `sign_in_step`: the host refused a sign-in step, with the sign-in's code and the check that
  *   refused it;
  * - `task_update`: the host refused to apply a task update, with its reason, or `other` for one
- *   core does not name.
+ *   core does not name;
+ * - `file_cap`: an execution's download went over the host's own file caps, with the cap
+ *   (`DownloadCap`);
+ * - `source_rule`: the host refused an execution before it ran, as `unsupported`, because its
+ *   source broke a host source rule core states, with the rule: a placed or downloaded file's
+ *   bytes stay with the host (`file_readback`), or a typed card does (`card_readback`).
  */
 export const HostRefusalSource = Schema.Union(
   Schema.Struct({
@@ -221,6 +231,14 @@ export const HostRefusalSource = Schema.Union(
       "other",
     ),
   }),
+  Schema.Struct({
+    source: Schema.Literal("file_cap"),
+    ...DownloadCap.fields,
+  }),
+  Schema.Struct({
+    source: Schema.Literal("source_rule"),
+    rule: Schema.Literal("file_readback", "card_readback"),
+  }),
 );
 export type HostRefusalSource = typeof HostRefusalSource.Type;
 
@@ -228,8 +246,9 @@ export type HostRefusalSource = typeof HostRefusalSource.Type;
  * What a `host_refused` ending stood on, in the blocked diagnostic: the source that set the
  * attempt's host refusal (`HostRefusalSource`), a sign-in screen the host refused because the
  * password's fills are spent (`sign_in_refill`), one it refused at its destination check
- * (`sign_in_destination`), live tests the host refuses with no batch left (`live_tests_spent`), and
- * a refusal an older worker's checkpoint kept without its source (`unrecorded`).
+ * (`sign_in_destination`), live tests the host refuses with no batch left (`live_tests_spent`), a
+ * challenge on the site the host recorded and could not get past (`challenge`), and a refusal an
+ * older worker's checkpoint kept without its source (`unrecorded`).
  */
 export type HostRefusalBasis =
   | HostRefusalSource
@@ -238,8 +257,28 @@ export type HostRefusalBasis =
         | "sign_in_refill"
         | "sign_in_destination"
         | "live_tests_spent"
+        | "challenge"
         | "unrecorded";
     };
+
+/**
+ * Where an output schema rejected the output a `contract_output_mismatch` refusal names, as the
+ * host lists it: the path (`""` for the output itself), what is wrong there (a required value
+ * `missing`, a `null` the schema rejects, a value of the wrong `type`, a value its `enum` or
+ * `const` doesn't list, or one that breaks another rule, `invalid`), what the schema expects there
+ * and the kind of value the output holds, such as `string` or `absent`. Never a value from the
+ * output, so it can go to the minter.
+ */
+export interface OutputIssue {
+  readonly path: string;
+  readonly issue: "missing" | "null" | "type" | "enum" | "invalid";
+  readonly expected?: string;
+  readonly observed?: string;
+}
+
+/** At most this many output issues go back to the minter, each text at most this long. */
+export const maximumOutputIssues = 20;
+export const maximumOutputIssueText = 200;
 
 export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
@@ -297,6 +336,11 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly publishesOnRefusal?: true;
   /** Where the input schema rejected the input a `contract_input_mismatch` refusal names. */
   readonly inputIssues?: readonly InputIssue[];
+  /**
+   * Where the output schema rejected the output a `contract_output_mismatch` refusal names, which
+   * a host may list; the harness returns at most `maximumOutputIssues` of them to the minter.
+   */
+  readonly outputIssues?: readonly OutputIssue[];
   /** For `output_checks_blocked`, each blocking finding by path, check and count; never a value. */
   readonly outputFindings?: readonly Pick<OutputFinding, "path" | "check" | "count">[];
   /** Which host-recorded route evidence a `destination_validation` refusal lacked. */
@@ -348,6 +392,16 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly reviewPhase?: ReviewFailure["reviewPhase"];
   /** Proves this submission stopped before execution; says nothing about prior effects. */
   readonly reviewDispatch?: "not_sent";
+  /**
+   * Set by the host on a failed example, act or residual step when nothing of the step reached
+   * the site, such as a host check that refused it at its first commit mark. The harness honors
+   * it only on a failure with no `execution` and no `runnerFailure`, which describe the step's
+   * run themselves. It then tracks no write for the step, as for `execution.dispatch`
+   * `not_sent`, so the repeat guard lets it run again; the minter hears the failure as it would
+   * without it. It is the host's word alone, and the harness infers it from nothing: a host never
+   * sets it on a step that may have sent anything.
+   */
+  readonly nothingSent?: true;
   /**
    * Why a maintenance recovery gate refused: its reason, what it expected and what it got, and
    * the earliest time a retry can pass it, so the agent fixes or waits instead of guessing.
@@ -600,6 +654,10 @@ export const MintRequest = Schema.Struct({
 export type MintRequest = typeof MintRequest.Type;
 
 const SignInSelector = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000));
+/** The ids of the answered questions whose answers confirm a change or a step (`confirmedBy`). */
+const ConfirmedBy = Schema.Array(
+  Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64)),
+).pipe(Schema.maxItems(8));
 const SignedInUrlPath = Schema.String.pipe(Schema.pattern(/^\/[^?#]{0,1999}$/));
 const SignedInOpenPath = Schema.String.pipe(Schema.pattern(/^\/[^#]{0,1999}$/));
 /**
@@ -682,24 +740,47 @@ export const SignInStep = Schema.Union(
      */
     submitKey: Schema.optional(SubmitKey),
     /**
-     * A two-factor method choice: every method the screen offers, each with the control that
-     * picks it, and `submit` the one to pick now. Runs pick again from these.
+     * A method choice: every method the screen offers, each with the control that picks it, and
+     * `submit` the one to pick now. A method chosen from a native select names that select and the
+     * value it lists for the method (`option`), and the step names the one to pick now as its own
+     * `option`. Runs pick again from its two-factor methods. A way in, `password` beside a code
+     * the site sends or an `identifier_` kind a control switches the screen to, has a control of
+     * its own, and runs keep the one this sign-in picks.
      */
     methods: Schema.optional(
-      Schema.Array(Schema.Struct({ method: SignInMethodChoice, selector: SignInSelector })).pipe(
-        Schema.minItems(1),
-        Schema.maxItems(8),
-      ),
+      Schema.Array(
+        Schema.Struct({
+          method: RecipeMethodChoice,
+          selector: SignInSelector,
+          option: Schema.optional(MethodOption),
+        }),
+      ).pipe(Schema.minItems(1), Schema.maxItems(8)),
     ),
+    /** A method choice's `option` to pick now, when its methods are a native select's options. */
+    option: Schema.optional(MethodOption),
     /**
      * The own control of a cookie or tracking consent banner that shows on this screen: its close
-     * or dismiss control, else one that rejects what is not essential, else accept when that is
-     * the only way out. The host clicks it before it types, when the page shows it, and runs do the
+     * or dismiss control, else one that rejects what is not essential in one click, else accept.
+     * The host clicks it before it types, when the page shows it, and runs do the
      * same. After the host reports `submit: blocked`, send the same step again with it: the host
      * clicks it, then clicks the submit once more, typing nothing unless the dismiss emptied a
      * field. Never a submit, a field or a control of the sign-in's own form.
      */
     dismiss: Schema.optional(SignInSelector),
+    /**
+     * The answered questions of this build where the owner allowed `dismiss` to accept a notice
+     * that blocks the sign-in and is not a cookie banner. The host refuses a step that names a
+     * question with no answer in this build or one the owner declined, and the recipe leaves that
+     * dismiss out, so runs never accept the notice.
+     */
+    confirmedBy: Schema.optional(ConfirmedBy),
+    /**
+     * The action with a lasting effect on the account this screen's submit takes: signing out
+     * another device or session, or trusting this browser. The recipe records it, and each run
+     * presses the submit only when its caller allowed that choice. Only a step with no fields and
+     * one submit, and no method choice, names one.
+     */
+    choice: Schema.optional(SignInChoice),
   }).pipe(
     Schema.filter((step) => step.fields.length > 0 || step.submit !== undefined, {
       message: () => "a sign-in step fills a field or clicks a control",
@@ -723,12 +804,38 @@ export const SignInStep = Schema.Union(
     ),
     Schema.filter(
       (step) =>
-        step.methods === undefined ||
+        (step.methods === undefined && step.option === undefined) ||
         (step.fields.length === 0 &&
-          step.methods.some((option) => option.selector === step.submit)),
+          (step.methods ?? []).some(
+            (method) => method.selector === step.submit && method.option === step.option,
+          )),
       {
         message: () =>
-          "a method choice fills no field, and its submit is the selector of one of its methods",
+          "a method choice fills no field, and its submit and option are one of its methods' selector and option",
+      },
+    ),
+    Schema.filter(
+      (step) =>
+        step.choice === undefined ||
+        (step.fields.length === 0 && step.submit !== undefined && step.methods === undefined),
+      { message: () => "a choice step fills no field and names one submit, with no method choice" },
+    ),
+    Schema.filter(
+      (step) => {
+        const methods = step.methods ?? [];
+        const ways = methods.filter((method) => isWayMethod(method.method));
+        return (
+          ways.every(
+            (way) =>
+              way.option === undefined &&
+              methods.filter((method) => method.selector === way.selector).length === 1,
+          ) &&
+          (!ways.some((way) => way.method === "password") || ways.length < methods.length)
+        );
+      },
+      {
+        message: () =>
+          "a way in is its own control, with no option, and a method choice that lists password lists a code method too",
       },
     ),
   ),
@@ -1126,6 +1233,13 @@ export interface ExecutionEvidence {
    * this way is its publication receipt, since maintenance cannot change the caller's input.
    */
   readonly refusal?: { readonly field?: string; readonly available: readonly string[] };
+  /**
+   * Trusted host marker on a failed execution whose failure is the host's refusal of a download
+   * over its own file caps, with the cap (`RunFiles.overCap`). No change to the source makes that
+   * same file smaller, so a `host_refused` report stands on it until a later example or act step
+   * settles without one. Optional, so a host that never sets it keeps today's answers.
+   */
+  readonly fileCap?: DownloadCap;
   readonly resultRef?: string;
   /** Private output is screened before returning to the agent. */
   readonly observations: unknown;
@@ -1202,6 +1316,7 @@ export const ExecutionEvidence: Schema.Schema<ExecutionEvidence> = Schema.Struct
   ),
   preflight: Schema.optionalWith(Schema.Literal("rejected_before_claim"), { exact: true }),
   refusal: Schema.optionalWith(ExecutionRefusal, { exact: true }),
+  fileCap: Schema.optionalWith(DownloadCap, { exact: true }),
   resultRef: Schema.optionalWith(Schema.String, { exact: true }),
   observations: Schema.Unknown,
   checks: Schema.optionalWith(
@@ -1474,9 +1589,7 @@ export type JobBuildBlocked = typeof JobBuildBlocked.Type;
 export const TaskUpdateRequest = Schema.Struct({
   summary: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(blockedExplanationLimit)),
   changes: Schema.Array(TaskChange).pipe(Schema.minItems(1), Schema.maxItems(8)),
-  confirmedBy: Schema.Array(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))).pipe(
-    Schema.maxItems(8),
-  ),
+  confirmedBy: ConfirmedBy,
   recommend: Schema.Literal("update", "new_mint"),
   suggestedRequest: Schema.optional(
     Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(blockedExplanationLimit)),
@@ -2641,6 +2754,22 @@ export interface MintDependencies {
   readonly capabilityQuestion?: string;
   /** Host-resolved availability only. Credentials never enter the model request. */
   readonly websiteCredentialsAvailable?: boolean;
+  /**
+   * With no login bound (`websiteCredentialsAvailable` not true): the caller already authorized a
+   * login the host signs in with once the build calls execute purpose authenticate. It changes
+   * only what the minter is told about signing in. The build still starts signed out, so it is
+   * not a held login: an unanswered question is handed back as before. A core without it ignores
+   * it.
+   */
+  readonly websiteLoginPreAuthorized?: true;
+  /**
+   * A read repair hands an unanswered question back to the minter as no answer even while it is
+   * signed in or holds a login. A read repair can't write, and no answer is still never consent.
+   * Every other rule for an unanswered question stands. Without it, any question left unanswered
+   * while the build is signed in or holds a login ends the build as before. A core without it
+   * ignores it.
+   */
+  readonly handBackSignedInReadRepair?: true;
   /** See `MintTurn.autofillSignIn`. */
   readonly autofillSignIn?: true;
   /**
@@ -2684,6 +2813,14 @@ export interface MintDependencies {
        * older host leaves it out.
        */
       readonly finding?: QuestionFinding;
+      /**
+       * The agent's own question only: the change of the site, the login or the effect a
+       * `mint_update` proposed that the harness refused as `confirmation_required`, until an update
+       * the caller confirmed applies. A host that forwards it to `questionForReview` lets the review
+       * tell the confirm question the host needs from one the request already settles; an older
+       * host leaves it out.
+       */
+      readonly hostConfirmation?: HostConfirmation;
     },
   ) => Effect.Effect<QuestionDecision & { readonly reviewId?: string }, MintFailure>;
   /**
@@ -2936,6 +3073,14 @@ export interface MintDependencies {
    * has it. Absent, the harness knows only the refusals it was handed as failures.
    */
   readonly signInDestinationRefused?: () => boolean;
+  /**
+   * Whether the host recorded a challenge or bot check on the site that it could not get past, in
+   * this attempt or in the run the build repairs: a solver or wait that failed, so no step left in
+   * the attempt can run on the site, and a minter that tries again on a new browser meets the same
+   * check. A `host_refused` block stands on it, named as the source `challenge`. The harness reads
+   * it when the minter reports `host_refused`. Absent, the harness knows only its own refusals.
+   */
+  readonly hostChallengeRefused?: () => boolean;
   /** The host's own descriptions of its optional tools, in place of the generic ones. */
   readonly hostToolDescriptions?: HostToolDescriptions;
   /**
@@ -3019,6 +3164,19 @@ export interface MintDependencies {
    * each stays unresolved, is never repeated and is reported `may_have_applied`.
    */
   readonly outcomeReview?: OutcomeReviewHost;
+  /**
+   * Whether the host lets a live step run although it repeats a write that may already have
+   * changed the site, because the host itself keeps the step from sending the write's final step
+   * again, such as a practice save of a form's earlier page on an account the caller confirmed is
+   * a test account. It gets the step and the execution IDs of the earlier writes it repeats, and is
+   * asked only for a step that repeats such a write, before the harness waits for the outcome
+   * review. Absent, or false, the step runs only once that review finds every such write
+   * `not_done`, as before.
+   */
+  readonly repeatAllowed?: (
+    request: ExecutionRequest,
+    repeats: readonly string[],
+  ) => Effect.Effect<boolean>;
   /** Host evidence of each publication decision; absent, reviews get none. */
   readonly publicationDecisions?: PublicationDecisionLog;
 }

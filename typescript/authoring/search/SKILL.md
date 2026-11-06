@@ -41,6 +41,8 @@ inputs use (see "Apply and read back").
   steps often change with the result set. Set the nearest step inside the caller's bound (down
   for a maximum, up for a minimum), the range's end for a value outside it, read the applied
   bound back and return it beside the results (core skill, "Configure, then read").
+  For a range slider, prefer setting its value in one move and waiting once for the results, not
+  after each step.
 - A filter group the page disables for this result set, such as a price filter when only one
   result shows, is part of the answer: check that a group is enabled before opening it, never
   wait on a disabled one, and return the results with that filter reported as not offered.
@@ -82,7 +84,8 @@ neither: it tailors the answer. Apply it, read it back and always return it, as 
 or `applied_zip`, the site's default included when the caller gave none, as the core skill's
 input schema says ("Inputs that tailor the answer"). When the caller gives a location but no
 store, use what the site would show for that location, such as the nearest store, rather than
-what the site guessed from the browser's own location, and return what was applied.
+what the site guessed from the browser's own location, and return what was applied. Look up
+a value the caller names as the core skill's input schema says.
 
 ## Results
 

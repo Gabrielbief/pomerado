@@ -7,6 +7,35 @@ export type SignInMethod = typeof SignInMethod.Type;
 /** `SignInMethod` or a recovery code; see `signInMethodChoices`. The shared contract's choice. */
 export const SignInMethodChoice = Schema.Literal(...signInMethodChoices);
 export type SignInMethodChoice = typeof SignInMethodChoice.Type;
+/**
+ * A way into the account that a sign-in screen's method choice may offer beside a code the site
+ * sends: a password, or the identifier a control switches the screen to ask for. A run takes the
+ * way its recorded sign-in picked, and asks nothing about it.
+ */
+const wayMethods = [
+  "password",
+  "identifier_username",
+  "identifier_email",
+  "identifier_phone",
+  "identifier_account_number",
+] as const;
+/** Whether a method choice's method is a way in rather than a two-factor method. */
+export const isWayMethod = Schema.is(Schema.Literal(...wayMethods));
+/** A recorded method choice's method: a two-factor method, or from recipe version 14 a way in. */
+export const RecipeMethodChoice = Schema.Literal(...signInMethodChoices, ...wayMethods);
+export type RecipeMethodChoice = typeof RecipeMethodChoice.Type;
+/**
+ * The value a native select lists for a sign-in method, when that select is the method's control:
+ * the host chooses it with the browser's own select action, which fires the page's change handler.
+ */
+export const MethodOption = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000));
+/**
+ * A sign-in screen's action with a lasting effect on the account, which each run's caller allows
+ * or not: signing out another device or session, or trusting this browser for later sign-ins. A
+ * run presses such a screen's control only when its caller allowed that choice.
+ */
+export const SignInChoice = Schema.Literal("sign_out_other_device", "trust_this_device");
+export type SignInChoice = typeof SignInChoice.Type;
 
 /**
  * How a `date_of_birth` field takes the date: a whole date in one of these layouts, or, for a
@@ -40,9 +69,9 @@ export const DateOfBirthFormat = Schema.Literal(
 export type DateOfBirthFormat = typeof DateOfBirthFormat.Type;
 /**
  * How a field that takes a phone number takes it: `national`, the number without its country
- * calling code, for a box that keeps only the local number and has no country picker. The host
- * types the digits after the saved number's calling code (`nationalDigits`); a number saved
- * without one is typed as saved.
+ * calling code, for a box that keeps only the local number and has no country picker, or a picker
+ * that already shows the number's country as the screen loads. The host types the digits after
+ * the saved number's calling code (`nationalDigits`); a number saved without one is typed as saved.
  */
 export const PhoneFormat = Schema.Literal("national");
 export type PhoneFormat = typeof PhoneFormat.Type;
