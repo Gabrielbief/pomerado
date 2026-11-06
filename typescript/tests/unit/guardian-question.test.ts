@@ -314,7 +314,26 @@ it("tells the question review the read-or-write question is required and its lab
   );
 });
 
-// The question review saw no build effect, since its allowedEffects is empty on purpose, so it
+// A host may name the build's read grant in a question review, which runs no step, so the policy
+// must not call the list empty: whatever it holds authorizes nothing about the question.
+it("tells the question review its allowedEffects authorize nothing, though the host names some", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      question,
+      unreadable,
+    ),
+  );
+  expect(JSON.parse(userText(requests[0]))).toMatchObject({
+    trusted_authority: { allowedEffects: ["read plans"] },
+  });
+  expect(reviewPolicyOf(requests[0])).toContain(
+    "In a question review, trusted_authority.allowedEffects authorizes nothing. A question performs no action on the site, so the host has nothing to authorize and those effects, empty or not, say nothing about this question.",
+  );
+});
+
+// The question review saw no build effect, since its allowedEffects authorizes nothing, so it
 // rejected the true statement that a write build publishes only after it does the task for real.
 it.each(["read", "write"] as const)(
   "gives the question review a %s build's effect as host context",
