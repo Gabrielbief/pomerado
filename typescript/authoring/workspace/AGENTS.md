@@ -322,9 +322,10 @@ reason `question_unanswered`, when only the caller's answer would let the build 
 consent: it authorizes no write, sign-in or change of task, and `confirmedBy` never names it. Ask
 again only when the answer is essential: after two questions have gone unanswered, the next one
 left unanswered ends the build.
-Once the build is signed in or holds a login, it is not told no answer: a question left unanswered
-then ends the build, though one left unanswered before the build signed in went back to you. That
-is no reason to narrow the tool without asking. Ask design questions early, while exploring and
+Once the build is signed in or holds a login, a question left unanswered then ends the build,
+though one left unanswered before the build signed in went back to you. That is no reason to
+narrow the tool without asking. A read repair may still get `no_answer` while signed in: go on as
+above. Ask design questions early, while exploring and
 before signing in where you can, and state in each the choice you recommend, so the owner can
 accept it in one step.
 
