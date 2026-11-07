@@ -1,10 +1,16 @@
 import { Effect } from "effect";
 import type { YieldableError } from "effect/Cause";
-import { approvalNumberOf, type AutofillPopup } from "../destinations/autofill-contracts.js";
+import {
+  approvalNumberOf,
+  type AutofillPopup,
+  pastedLinkPrompt,
+  pastedSignInLink,
+} from "../destinations/autofill-contracts.js";
+import type { AutofillInspection } from "../destinations/autofill-step.js";
 import type { SignInRecipeStep } from "../destinations/sign-in-recipe.js";
 import { leftSignInScreens } from "./autofill-replay-pages.js";
 import { returnedCredential, type Replay } from "./autofill-replay-session.js";
-import type { AutofillReplayInput } from "./autofill-replay-steps.js";
+import { askOne, type AutofillReplayInput } from "./autofill-replay-steps.js";
 import type { AutofillHooks } from "./autofill-state.js";
 import type { AutofillLogin } from "./autofill-values.js";
 
@@ -31,6 +37,48 @@ export const approvalNumber = <E>(
 /** A device approval's confirmation, naming the number to pick when its screen showed one. */
 export const withApprovalNumber = (prompt: string, number: string | undefined) =>
   number === undefined ? prompt : `${prompt} If it asks you to choose a number, pick ${number}.`;
+
+/**
+ * An email-link approval recorded with `delivery: "paste"`, whose link signs in only the browser
+ * that opens it: the owner pastes the link into a protected question, the broker registers it so
+ * every copy masks it, and the replay opens it on the sign-in's tab, with no recording where the
+ * host has one (`withoutRecording`), only when it is on the site or a sign-in origin the approval
+ * screen's inspection trusted (`pastedSignInLink`). A link anywhere else is never opened
+ * (`approval_link_refused`), and no answer is a decline. No event, outcome or recorded step holds
+ * the link.
+ */
+export const openPastedLink = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  input: AutofillReplayInput<E, V, L>,
+  screen: Pick<AutofillInspection, "siteOrigin" | "authenticationOrigins">,
+) =>
+  Effect.gen(function* () {
+    const answer = yield* askOne(input, {
+      id: "sign_in_link",
+      type: "secret",
+      secretKind: "private_text",
+      prompt: pastedLinkPrompt(input.site),
+    });
+    if (answer?.type !== "secret") return "approval_declined" as const;
+    const link = pastedSignInLink(answer.value, screen);
+    for (const value of new Set([answer.value, answer.value.trim(), link ?? ""]))
+      if (value !== "")
+        yield* input.broker
+          .register({ kind: "secret", entity: "SIGN_IN_LINK", value })
+          .pipe(
+            Effect.mapError((error) => input.failures.unavailable("broker.register", { error })),
+          );
+    if (link === undefined) return "approval_link_refused" as const;
+    // The browser's own failure may quote the address it loaded: none of it goes on.
+    const open = input.hooks
+      .open(link)
+      .pipe(
+        Effect.mapError(() =>
+          input.failures.unavailable("autofill.open", { context: { check: "pasted_link" } }),
+        ),
+      );
+    yield* input.hooks.withoutRecording?.(open) ?? open;
+    return "opened" as const;
+  });
 
 /** A page's origin, scheme, host and port; none for an opaque one, which matches nothing. */
 const originOf = (page: string) => {
