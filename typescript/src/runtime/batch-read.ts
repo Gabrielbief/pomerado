@@ -18,8 +18,10 @@ import type { HttpFailure, SiteHttpRequest, SiteHttpResult, SiteHttpService } fr
  *   (at least 1), waits the longest `Retry-After` in the batch, else the site's `RateLimit-Reset`,
  *   or a backoff that doubles from `backoffMs` without either, and sends the throttled requests
  *   again first, each at most `maxAttempts` times in all. A wait longer than `maxWaitMs` stops the
- *   batch as `rate_limited`, since waiting it out would outlast the call, and so does a second
- *   throttled batch in a row, since waiting did not help; nothing is sent again.
+ *   batch as `rate_limited`, since waiting it out would outlast the call. So does a second batch in
+ *   a row that throttles a request the site had not throttled before, since the site still refuses
+ *   fresh requests after the wait; nothing is sent again. A request throttled again on its retry
+ *   only uses up its own tries, so one record the site always fails ends `throttled` alone.
  * - A block stops the batch at once, and nothing more is sent: a challenge page the host found, a
  *   403 that is not JSON, a 503 HTML page where JSON was asked for, or a 2xx HTML page where JSON
  *   was asked for. It never retries through a block; the challenge and proxy paths deal with it.
@@ -111,6 +113,7 @@ export async function adaptiveBatch<A>(
 ): Promise<BatchRun<A>> {
   const outcomes: (BatchOutcome<A> | undefined)[] = Array.from({ length: count }, () => undefined);
   const attempts: number[] = Array.from({ length: count }, () => 0);
+  const throttledOnce: boolean[] = Array.from({ length: count }, () => false);
   const queue: number[] = Array.from({ length: count }, (_, index) => index);
   const batches: number[] = [];
   const started = settings.now();
@@ -118,7 +121,7 @@ export async function adaptiveBatch<A>(
     settings.budgetMs !== undefined && settings.now() - started + waitMs >= settings.budgetMs;
   let limit = Math.max(1, Math.min(settings.start, settings.max));
   let throttledBefore = false;
-  let throttledLast = false;
+  let freshLast = false;
   let backoffs = 0;
   let stopped: BatchStop | undefined;
   while (queue.length > 0 && stopped === undefined) {
@@ -147,6 +150,7 @@ export async function adaptiveBatch<A>(
     let waitMs = 0;
     let blockedAt: number | undefined;
     let throttledAt: number | undefined;
+    let fresh = false;
     let rateLimited: { index: number; retryAfterMs: number } | undefined;
     let resetTooLong: { index: number; retryAfterMs: number } | undefined;
     for (const { index, answer, error } of sent) {
@@ -161,6 +165,9 @@ export async function adaptiveBatch<A>(
       if (answer.kind !== "throttled" && reset === undefined) continue;
       // The first answer that throttled or said no request remains.
       if (throttledAt === undefined) throttledAt = index;
+      // A throttle on a request the site had not throttled before: it refuses fresh requests.
+      if (!throttledOnce[index]) fresh = true;
+      if (answer.kind === "throttled") throttledOnce[index] = true;
       const retryAfterMs = answer.kind === "throttled" ? answer.retryAfterMs : undefined;
       const siteWaitMs = retryAfterMs ?? (reset === null ? undefined : reset);
       if (siteWaitMs !== undefined && siteWaitMs > settings.maxWaitMs) {
@@ -175,8 +182,9 @@ export async function adaptiveBatch<A>(
     }
     const throttled = throttledAt !== undefined;
     const left = again.length > 0 || queue.length > 0;
-    // A second throttled batch in a row ends the run with this batch's answers as they came.
-    const repeat = throttled && throttledLast && left;
+    // A second batch in a row that throttled a fresh request ends the run with this batch's
+    // answers as they came. A retried request throttled again counts toward its own tries only.
+    const repeat = fresh && freshLast && left;
     if (blockedAt !== undefined) stopped = { reason: "blocked", index: blockedAt };
     else if (rateLimited !== undefined) stopped = { reason: "rate_limited", ...rateLimited };
     else if (resetTooLong !== undefined && left) stopped = { reason: "rate_limited", ...resetTooLong };
@@ -190,7 +198,7 @@ export async function adaptiveBatch<A>(
       queue.length = 0;
       break;
     }
-    throttledLast = throttled;
+    freshLast = fresh;
     if (throttled) {
       limit = Math.max(1, Math.floor(limit / 2));
       throttledBefore = true;

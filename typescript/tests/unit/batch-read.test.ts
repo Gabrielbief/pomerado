@@ -195,8 +195,8 @@ describe("batchRead", () => {
     expect(bodies(result.items)).toEqual([0, 1, 2, 3].map((id) => ({ id })));
   });
 
-  it("never grows after a throttled batch, and stops when the next batch is throttled too", async () => {
-    const site = scriptedSite((url, number) => (number <= 4 ? [json({ id: idOf(url) })] : [overloaded]));
+  it("never grows after a throttled batch, and stops when the next batch throttles a fresh request too", async () => {
+    const site = scriptedSite((url, number) => (number <= 8 ? [json({ id: idOf(url) })] : [overloaded]));
     const { clock, waits } = fakeClock();
     const outcome = await Effect.runPromise(
       Effect.either(batchRead(site.http, reads(20), { clock })),
@@ -204,11 +204,12 @@ describe("batchRead", () => {
     expect(Either.isLeft(outcome)).toBe(true);
     if (Either.isLeft(outcome)) {
       expect(outcome.left.message).toContain(
-        "The site throttled two batches in a row at request 4, after 4 of 20 answered; nothing more was sent.",
+        "The site throttled two batches in a row at request 8, after 8 of 20 answered; nothing more was sent.",
       );
       expect(outcome.left.http?.status).toBe(529);
     }
-    // 4 answered, then 6 throttled: one backoff and half the size, then 3 throttled again.
+    // 4 answered, then 6 with the last 2 throttled: one backoff and half the size, then 3 whose
+    // one fresh request is throttled too.
     expect(waits).toEqual([1000]);
     expect(site.sent).toHaveLength(13);
   });
@@ -364,6 +365,21 @@ describe("batchFetch in the page", () => {
       ...Array.from({ length: 8 }, () => "throttled"),
       ...Array.from({ length: 132 }, () => "not_sent"),
     ]);
+  });
+
+  it("retries one record that always answers 500 up to maxAttempts, and reads every other one", async () => {
+    const broken = { status: 500, headers: { "content-type": "application/json" }, body: "{}" };
+    const site = scriptedSite((url) => (url === itemUrl(5) ? [broken] : [json({ id: idOf(url) })]));
+    vi.stubGlobal("fetch", site.fetch);
+    const answer = await runBatchFetch(
+      Array.from({ length: 30 }, (_, index) => ({ url: itemUrl(index) })),
+      { backoffMs: 1 },
+    );
+    expect(answer.stopped).toBeNull();
+    expect(site.sent.filter((url) => url === itemUrl(5))).toHaveLength(3);
+    expect(answer.results.map((result) => result.data ?? result.error)).toEqual(
+      Array.from({ length: 30 }, (_, id) => (id === 5 ? "throttled" : { id })),
+    );
   });
 
   it("refuses a write, or any method but GET, HEAD, OPTIONS and POST, before anything is sent", async () => {
