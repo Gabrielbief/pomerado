@@ -159,15 +159,16 @@ During the session:
   site-field question may ask, such as a card or bank field: call `notCommitted` for the step,
   then throw `InvalidInput` that names the field by its label, and don't click again.
 - Before the first commit mark, prefer looking up every existing entry the caller names, each item
-  to add included, with read-only steps, in the session and on every run of the composed script.
-  On a write saved across several pages, when the site's own option lists for a later page can be
-  read before the first save and do not depend on what an earlier page saves, such as the form
-  definitions or option data an earlier page loads, prefer reading them too and checking every
-  caller value for those fields against them. Match each value by the site's option value as well
-  as its label (forms skill), and count matching items by the site's own item id where the page
-  shows one, so an item listed in more than one place is one match, not an ambiguous one. Refuse
-  with `InvalidInput` and `available` before anything is saved when a value matches nothing. A
-  refusal after an earlier save leaves a half-made record and an outcome the caller can't know.
+  and option included, with read-only steps, in the session and on every run of the composed
+  script. On a write saved across several pages, when the site's own option lists for a later page
+  can be read before the first save and do not depend on what an earlier page saves, such as the
+  form definitions or option data an earlier page loads, prefer reading them too and checking
+  every caller value for those fields against them. Match each value by the site's option value as
+  well as its label (forms skill), and count matching items by the site's own item id where the
+  page shows one, so an item listed in more than one place is one match, not an ambiguous one.
+  Refuse with `InvalidInput` and `available` before anything is saved when a value matches
+  nothing. A refusal after an earlier save leaves a half-made record and an outcome the caller
+  can't know.
 - A pop-up, banner or interstitial on the path, such as an upsell, is conditional unless the
   page always opens it in answer to an action: handle it as the forms skill says, so the tool
   still works for a caller who never sees it.
