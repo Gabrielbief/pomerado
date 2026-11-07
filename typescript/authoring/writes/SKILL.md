@@ -158,14 +158,17 @@ During the session:
   after the step's first click, the click saved nothing but a field it flagged is one no
   site-field question may ask, such as a card or bank field: call `notCommitted` for the step,
   then throw `InvalidInput` that names the field by its label, and don't click again.
-- On a write saved across several pages, when the site's own option lists for a later page can
-  be read before the first save and do not depend on what an earlier page saves, such as the
-  form definitions or option data an earlier page loads, prefer reading them and checking every
-  caller value for those fields against them before the first commit mark, in the session and
-  on every run of the composed script. Match each value by the site's option value as well as
-  its label (forms skill), and refuse with `InvalidInput` and `available` before anything is
-  saved when a value matches neither. A refusal after an earlier save leaves a half-made record
-  and an outcome the caller can't know.
+- Before the first commit mark, prefer looking up every entry the caller names, each item to add
+  included, with read-only steps, in the session and on every run of the composed script. On a
+  write saved across several pages, when the site's own option lists for a later page can be read
+  before the first save and do not depend on what an earlier page saves, such as the form
+  definitions or option data an earlier page loads, prefer reading them too and checking
+  every caller value for those fields against them. Match each value by the site's option value
+  as well as its label (forms skill), and count matching items by the site's own item id where the
+  page shows one, so an item listed in more than one place is one match, not an ambiguous one.
+  Refuse with `InvalidInput` and `available` before anything is saved when a value matches
+  nothing. A refusal after an earlier save leaves a half-made record and an outcome the caller
+  can't know.
 - A pop-up, banner or interstitial on the path, such as an upsell, is conditional unless the
   page always opens it in answer to an action: handle it as the forms skill says, so the tool
   still works for a caller who never sees it.
@@ -391,9 +394,10 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   completed. A session in which any step recorded a confirmation is never
   `unverifiable`; publish against the confirming step.
 - After a commit, the site may open a dialog or cover the page, such as an added-to-cart panel.
-  Prefer confirming the commit from its own response, and prefer closing such a dialog with its
-  own control (core skill), or going to the address in the site's own link, before clicking
-  anything behind it.
+  Prefer confirming the commit from its own response, and prefer waiting for every answer the
+  site can give to the click, its own added page, panel or cart change included, over waiting
+  only for the page the session saw. Prefer closing such a dialog with its own control (core
+  skill), or going to the address in the site's own link, before clicking anything behind it.
 - When one run repeats a commit for several items, such as adding items to a cart, prefer
   confirming each item from its own commit response and reading the saved state once after the
   last item, over reloading the page after every item. When a commit answers a 429, a bot
@@ -541,7 +545,11 @@ note.
   call `verified()` then, even when a value differs. Run the before-and-after comparison after
   it, over the reads the call already made, and report a difference it finds in the output, in
   a field the output schema declares for it, never by throwing. A throw after a confirmed save
-  fails the run: the caller gets an error in place of the output, though the write landed.
+  fails the run: the caller gets an error in place of the output, though the write landed. In
+  that read-back, prefer needing only what proves the change, the record's identity and the
+  values the input sets, and passing every other field to `waitForRows` or `waitForValues` as
+  `optional`. Prefer reporting a value the page doesn't show clearly as unreadable in the output
+  over throwing.
   List each field the input sets that the site saved differently, from the commit response or
   the read-back, in an optional output field `saved_differences`: `{ field, wanted, shown }`,
   as `saveAndReadBack` returns it, with `shown` left out when the site shows none, and
