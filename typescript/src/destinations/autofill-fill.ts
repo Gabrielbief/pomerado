@@ -1073,8 +1073,8 @@ const afterFieldCall = (
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
  * fails that field, and one refused before the click, or a submission refused as it fires, refuses
  * the submit. That click ran, though, so the report says so (`clicked`): the page's own handlers
- * ran on it, and what the step filled may have gone out. A submit the page keeps disabled is never
- * clicked: the host waits for the page to enable it once the fields are filled. When it stays
+ * ran on it, and what the step filled may have gone out. A submit the page keeps disabled or inert
+ * is never clicked: the host waits for the page to enable it once the fields are filled. When it stays
  * disabled after the host typed a field, the host types every field again key by key
  * (`InsertionOptions.keys`, and trusted keys again for a slot `keyboard` types), for a page that
  * enables it only on key presses, and waits once more.

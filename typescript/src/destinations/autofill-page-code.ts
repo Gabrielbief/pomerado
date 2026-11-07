@@ -172,8 +172,8 @@ return {
  *   another element caught a click the host may press past (`pressCovered`) or the step says to
  *   (`submitVia`), waits for the page to
  *   settle and reads its controls (`pageControlsCode`), with how many of their alerts did not show
- *   before the click (`newAlerts`) when it read them. A disabled submit it never clicks: it says so
- *   and does nothing, and the host calls again while the page may still enable it.
+ *   before the click (`newAlerts`) when it read them. A disabled or inert submit it never clicks:
+ *   it says so and does nothing, and the host calls again while the page may still enable it.
  */
 export type AutofillFillCall =
   | {
@@ -799,8 +799,10 @@ ${
   return { dated: false, url: primary.url() };
 }`;
   return `${call.look === true ? "return { submit: \"none\", url: primary.url() };\n" : ""}if (submit === null) return { submit: "none", url: primary.url() };
-// Disabled as Playwright's own click judges it, read where page code cannot redefine the answer.
-if (await submit.locator.isDisabled({ timeout: 5000 })) return { submit: "disabled", url: primary.url() };
+// Disabled as Playwright's own click judges it, read where page code cannot redefine the answer,
+// or inert, which a page may lift once the fields hold input as it may enable a disabled one.
+if (submit.inert || (await submit.locator.isDisabled({ timeout: 5000 })))
+  return { submit: "disabled", url: primary.url() };
 const guardKey = ${JSON.stringify(call.guardKey)};
 const guardCall = ${JSON.stringify(call.guardCall)};
 const secretMatch = ${JSON.stringify(call.secretMatch)};
@@ -1173,10 +1175,6 @@ const submit =
     : foundSubmit === null
       ? null
       : readFound[foundFields.length];
-// An inert submit takes no interaction at all, so nothing is typed for it. A disabled one may be
-// enabled once the fields hold input; the submit call never clicks it while it is disabled.
-if (submit !== null && submit.inert)
-  return { error: "not_editable", target: "submit", located: submit.located, url: primary.url() };
 // A method chosen from a native select: the select must list its option, or nothing is chosen.
 if (
   submitOption !== null &&
