@@ -7222,8 +7222,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       const sessionLoss = dependencies.signInSessionLoss?.();
                       // The minter's explanation still says why, kept only as a last answer is:
                       // once Guardian's review of a blocked outcome allows its caller to read it.
+                      // A caller_input explanation asks for a changed request, so it keeps none.
                       const stopExplanation =
-                        terminal === undefined
+                        terminal === undefined && report.reason !== "caller_input"
                           ? yield* reviewedStopExplanation(explanation)
                           : undefined;
                       terminal ??= {

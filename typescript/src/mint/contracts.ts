@@ -1825,9 +1825,9 @@ export type MintOutcome = {
   /**
    * The minter's last answer when it stopped without a tool call (`final_text_without_tool`), or
    * its blocked report's explanation when the harness ended that report as sign-in unavailable
-   * instead (`sign_in_failed` beside `recoveryReason: "sign_in_unavailable"`). Either is screened
-   * for credentials and host-private values and kept only when Guardian's question review allowed
-   * its caller to read it, as a blocked explanation is.
+   * instead (`sign_in_failed` beside `recoveryReason: "sign_in_unavailable"`), unless it reported
+   * `caller_input`. Either is screened for credentials and host-private values and kept only when
+   * Guardian's question review allowed its caller to read it, as a blocked explanation is.
    */
   readonly stopExplanation?: string;
   /** Host-only references: preserve first execution independently of build success. */
