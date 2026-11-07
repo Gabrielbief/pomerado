@@ -259,6 +259,34 @@ it("allows a caller-input report whose reason is a limit the tool's input descri
   );
 });
 
+// A requested change asked to leave every checkbox as the page sets it, a preselected marketing
+// opt-in included. The question review read that request as trusted intent to keep the opt-in on:
+// it told the agent asking about turning it off that no question was needed, and reworded the
+// agent's decline until the reason, the safety default, was gone.
+it("tells the question review a requested change's request to keep a safety default on is not trusted intent", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      { ...question, blockedOutcome: true },
+      unreadable,
+    ),
+  );
+  const rules = reviewPolicyOf(requests[0]).split("\n");
+  const alreadyRequested = rules.find((rule) =>
+    rule.startsWith("- asks permission to do what trusted intent already requests"),
+  );
+  expect(alreadyRequested).toContain(
+    "a requested change's request to keep on an option a safety default turns off doesn't count as trusted intent unless the site refuses to submit with it off",
+  );
+  const blockedReport = rules.find((rule) =>
+    rule.startsWith("- question_review.blockedOutcome is true:"),
+  );
+  expect(blockedReport).toMatch(
+    /build agent itself declined.*That the tool keeps a safety default is a true reason it may state\./u,
+  );
+});
+
 // A repair asked whether the caller's refused value was invalid or real, and the question review
 // reworded it to offer a replacement value. The host keeps a repair's input fixed, so that answer
 // could never apply.
