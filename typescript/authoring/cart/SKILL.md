@@ -52,8 +52,8 @@ assume the cart starts empty. Afterwards, confirm from the cart itself that the 
 the expected quantity (the earlier quantity plus the input, or the input), then call
 `verified()`, compare every other line with the before read and return the lines as read.
 Prefer needing only each line's identity, chosen options and quantity in that read, with every
-other value optional, so a price the page doesn't show clearly comes back null rather than
-failing the read before `verified()` (writes skill, "Check the read-back"). When comparing lines
+other value optional, so a price the page doesn't show clearly can't fail the read before
+`verified()` (writes skill, "Check the read-back"). When comparing lines
 before and after, such as to list other lines that changed, prefer comparing
 `unit_price_minor` with `unit_price_minor` and `line_total_minor` with `line_total_minor` (core
 skill, output fields), so a line's quantity, new or above one, doesn't read as a price change.

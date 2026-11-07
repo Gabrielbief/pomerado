@@ -1006,7 +1006,7 @@ it("has a write check caller values against the site's own option lists before i
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "- Before the first commit mark, prefer looking up every entry the caller names, each item to add included, with read-only steps, in the session and on every run of the composed script. On a write saved across several pages, when the site's own option lists for a later page can be read before the first save and do not depend on what an earlier page saves, such as the form definitions or option data an earlier page loads, prefer reading them too and checking every caller value for those fields against them. Match each value by the site's option value as well as its label (forms skill), and count matching items by the site's own item id where the page shows one, so an item listed in more than one place is one match, not an ambiguous one. Refuse with `InvalidInput` and `available` before anything is saved when a value matches nothing. A refusal after an earlier save leaves a half-made record and an outcome the caller can't know.",
+    "- Before the first commit mark, prefer looking up every existing entry the caller names, each item to add included, with read-only steps, in the session and on every run of the composed script. On a write saved across several pages, when the site's own option lists for a later page can be read before the first save and do not depend on what an earlier page saves, such as the form definitions or option data an earlier page loads, prefer reading them too and checking every caller value for those fields against them. Match each value by the site's option value as well as its label (forms skill), and count matching items by the site's own item id where the page shows one, so an item listed in more than one place is one match, not an ambiguous one. Refuse with `InvalidInput` and `available` before anything is saved when a value matches nothing. A refusal after an earlier save leaves a half-made record and an outcome the caller can't know.",
   );
   // A check that can only run after an earlier save keeps its honest possible change.
   expect(text("writes")).toContain(
@@ -1015,7 +1015,7 @@ it("has a write check caller values against the site's own option lists before i
   // It sits after the refusal rule and its exceptions, so that rule's "those checks" still names
   // the checks before it.
   expect(text("writes")).toContain(
-    "then throw `InvalidInput` that names the field by its label, and don't click again. - Before the first commit mark, prefer looking up every entry the caller names,",
+    "then throw `InvalidInput` that names the field by its label, and don't click again. - Before the first commit mark, prefer looking up every existing entry the caller names,",
   );
   expect(text("forms")).toContain(
     "Choose the option that matches the input value, by the option's value or its observed label pattern, and read back that the field took it. When the control shows only labels, prefer matching against the site's own table of option values and labels, such as the form definitions or option data the page or an earlier page loads, over the visible words alone, so an input holding the site's code for an option picks that option.",
@@ -1313,8 +1313,8 @@ it("renders the pinned standalone authoring", async () => {
     ["f3c485485bf431f4bf4b046f5f9629bef49c2b8b4b3ca8e187e1abe0f96a5976", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["2dd7cabe26d127855e4a8d2d6975b23e8b0999e6d1e227a1b6157dcb32e5c781", "forms"],
-    ["82beff2a0bdf24f68d84f7ebc3702b4eb8944357c0b0aa0e645280356e42b753", "writes"],
-    ["b989d4196f05f59eb1562cec8f8a07f83c68b923db40a13510aeced7059bd10a", "cart"],
+    ["3fc1d602802b82dfae507abc8826d62175cd56d37204ba9ea36a06f23eebc8b6", "writes"],
+    ["a0fd87e18a6655ecebdd988e6f7ea402748af5189bee0c84233b7d9173725c34", "cart"],
     ["da2819239f93381dfb614459659082e075ad8502f9851b879bade2582aed07cb", "caller-input"],
     ["8a3ae8ebe6c3d4b946265c44f9eeb1e092f356666cac629f050faf24ef49eb6d", "publication"],
     ["34ea9283866001cc4fca79128638f970cc0fdea87950eafd593091cc6d707d61", "workspace/AGENTS.md"],
