@@ -1632,7 +1632,11 @@ const declinedExample = {
 const signInThenDecline = (
   steps: readonly (object | MintFailure)[],
   overrides: Parameters<typeof fixture>[1] = {},
-  report: { readonly reason: string; readonly explanation: string } = declinedExample,
+  report: {
+    readonly reason: string;
+    readonly explanation: string;
+    readonly intent?: string;
+  } = declinedExample,
 ) => {
   let executions = 0;
   return fixture(
@@ -1779,6 +1783,23 @@ it("keeps no explanation of a report ended as sign-in unavailable that Guardian 
   expect(outcome).toMatchObject({ recoveryReason: "sign_in_unavailable" });
   expect(outcome).not.toHaveProperty("stopExplanation");
   expect(JSON.stringify(outcome)).not.toContain("owner@example.test");
+});
+
+// A caller_input explanation asks its caller to change the request, which a sign-in unavailable
+// ending never does, so that ending keeps none of it.
+it("keeps no explanation of a caller_input report ended as sign-in unavailable", async () => {
+  const f = await signInThenDecline([submittedScreen, rejectionUnconfirmed], {}, {
+    reason: "caller_input",
+    explanation: conflictExplanation,
+    intent: "The request says read public data, and the record contradicts its source.",
+  });
+  const outcome = await f.run();
+  expect(outcome).not.toHaveProperty("blocked");
+  expect(outcome).toMatchObject({
+    recoveryReason: "sign_in_unavailable",
+    stopReason: "sign_in_failed",
+  });
+  expect(outcome).not.toHaveProperty("stopExplanation");
 });
 
 /** What an accepted or rewritten ending's `phase: "blocked"` diagnostic records. */
