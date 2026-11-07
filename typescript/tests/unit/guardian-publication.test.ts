@@ -1068,6 +1068,19 @@ describe("the publication policy", () => {
     expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule} `);
   });
 
+  // A screen that only asks whether to remember or trust this browser has no default to leave it
+  // at. Declining it saves nothing, so neither review holds the host's sign-in step that declines
+  // it, and the publication review reads the same step in the saved sign-in.
+  it("prefers allowing the host's sign-in step that declines a remember or trust screen in both reviews", () => {
+    const rule =
+      "Prefer allowing the host's own sign-in step that declines a screen asking only whether to remember or trust this browser or device, whatever its wording: declining saves nothing and needs no owner answer, so neither escalate nor deny that step over it.";
+    expect(publicationSafetyDefaultPolicy.endsWith(` ${rule}`)).toBe(true);
+    expect(guardianPublicationPolicy).toContain(publicationSafetyDefaultPolicy);
+    expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(
+      ` names that box. An agent's own step that changes such a box still follows the sign-in screen rule above. ${rule}\n`,
+    );
+  });
+
   // An edit that drops a tool's unchecking of a preselected partner comparison box is not a fix,
   // and the box is never an input of the tool.
   it("keeps a safety default the source sets, and never asks for it as an input", () => {
