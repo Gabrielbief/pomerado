@@ -147,6 +147,8 @@ describe("batchRateLimitResetMs", () => {
     expect(batchRateLimitResetMs(null, null, '"default";r=0;t=30')).toBe(30_000);
     expect(batchRateLimitResetMs(null, null, '"burst";r=0;t=5, "daily";r=900;t=3600')).toBe(5000);
     expect(batchRateLimitResetMs(null, null, "limit=100, remaining=0, reset=7")).toBe(7000);
+    expect(batchRateLimitResetMs("0", null, '"default";r=0;t=9')).toBe(9000);
+    expect(batchRateLimitResetMs("0", null, '"default";t=9')).toBe(9000);
   });
 
   it("gives null when none remain and no reset is given, and nothing while requests remain", () => {
@@ -195,8 +197,8 @@ describe("batchRead", () => {
     expect(bodies(result.items)).toEqual([0, 1, 2, 3].map((id) => ({ id })));
   });
 
-  it("never grows after a throttled batch, and stops when the next batch throttles a fresh request too", async () => {
-    const site = scriptedSite((url, number) => (number <= 8 ? [json({ id: idOf(url) })] : [overloaded]));
+  it("never grows after a throttled batch, and stops when the next batch is throttled too", async () => {
+    const site = scriptedSite((url, number) => (number <= 4 ? [json({ id: idOf(url) })] : [overloaded]));
     const { clock, waits } = fakeClock();
     const outcome = await Effect.runPromise(
       Effect.either(batchRead(site.http, reads(20), { clock })),
@@ -204,14 +206,25 @@ describe("batchRead", () => {
     expect(Either.isLeft(outcome)).toBe(true);
     if (Either.isLeft(outcome)) {
       expect(outcome.left.message).toContain(
-        "The site throttled two batches in a row at request 8, after 8 of 20 answered; nothing more was sent.",
+        "The site throttled two batches in a row at request 4, after 4 of 20 answered; nothing more was sent.",
       );
       expect(outcome.left.http?.status).toBe(529);
     }
-    // 4 answered, then 6 with the last 2 throttled: one backoff and half the size, then 3 whose
-    // one fresh request is throttled too.
+    // 4 answered, then 6 throttled: one backoff and half the size, then 3 throttled again.
     expect(waits).toEqual([1000]);
     expect(site.sent).toHaveLength(13);
+  });
+
+  it("backs off after a 5xx whose RateLimit-Reset is 0", async () => {
+    const site = scriptedSite((url) =>
+      url === itemUrl(2)
+        ? [limited(json({}, 500), { "ratelimit-remaining": "0", "ratelimit-reset": "0" }), json({ id: 2 })]
+        : [json({ id: idOf(url) })],
+    );
+    const { clock, waits } = fakeClock();
+    const result = await Effect.runPromise(batchRead(site.http, reads(4), { clock }));
+    expect(waits).toEqual([1000]);
+    expect(bodies(result.items)).toEqual([0, 1, 2, 3].map((id) => ({ id })));
   });
 
   it("waits the site's RateLimit-Reset once none remain, and does not grow the next batch", async () => {
@@ -355,17 +368,52 @@ describe("batchFetch in the page", () => {
       Array.from({ length: 200 }, (_, index) => ({ url: itemUrl(index) })),
       { backoffMs: 1 },
     );
-    expect(answer.stopped).toMatchObject({ reason: "rate_limited", index: 60 });
-    // Grows to 16 while the site answers, halves after the first throttled batch and stops after
-    // the second: 73 of 200 sent.
-    expect(answer.batches).toEqual([4, 6, 9, 14, 16, 16, 8]);
-    expect(site.sent).toHaveLength(73);
+    expect(answer.stopped).toEqual({ reason: "rate_limited", index: 60 });
+    // Grows to 16 while the site answers, halves after the batch where the 529s begin, then stops
+    // after two batches in a row the site throttled whole: 77 of 200 sent.
+    expect(answer.batches).toEqual([4, 6, 9, 14, 16, 16, 8, 4]);
+    expect(site.sent).toHaveLength(77);
     expect(answer.results.map((result) => (result.ok ? "ok" : result.error))).toEqual([
       ...Array.from({ length: 60 }, () => "ok"),
       ...Array.from({ length: 8 }, () => "throttled"),
       ...Array.from({ length: 132 }, () => "not_sent"),
     ]);
   });
+
+  it("stops as rate_limited within 6 sends when the site answers 529 from the first request", async () => {
+    const site = scriptedSite(() => [overloaded]);
+    vi.stubGlobal("fetch", site.fetch);
+    const answer = await runBatchFetch(
+      Array.from({ length: 100 }, (_, index) => ({ url: itemUrl(index) })),
+      { backoffMs: 1 },
+    );
+    // The site gave no wait, so the stop carries none.
+    expect(answer.stopped).toEqual({ reason: "rate_limited", index: 0 });
+    expect(answer.batches).toEqual([4, 2]);
+    expect(site.sent).toHaveLength(6);
+    expect(answer.results.map((result) => result.error)).toEqual([
+      ...Array.from({ length: 4 }, () => "throttled"),
+      ...Array.from({ length: 96 }, () => "not_sent"),
+    ]);
+  });
+
+  it.each([0, 4, 10, 19, 20, 33, 49])(
+    "stops as rate_limited soon after the site turns to 529 after %i requests",
+    async (answered) => {
+      const site = scriptedSite((url, number) =>
+        number <= answered ? [json({ id: idOf(url) })] : [overloaded],
+      );
+      vi.stubGlobal("fetch", site.fetch);
+      const answer = await runBatchFetch(
+        Array.from({ length: 200 }, (_, index) => ({ url: itemUrl(index) })),
+        { backoffMs: 1 },
+      );
+      expect(answer.stopped?.reason).toBe("rate_limited");
+      // The rest of the batch in flight, then at most two halved batches: 6 to 24 sends here.
+      expect(site.sent.length - answered).toBeLessThanOrEqual(24);
+      expect(answer.results.filter((result) => result.ok)).toHaveLength(answered);
+    },
+  );
 
   it("retries one record that always answers 500 up to maxAttempts, and reads every other one", async () => {
     const broken = { status: 500, headers: { "content-type": "application/json" }, body: "{}" };

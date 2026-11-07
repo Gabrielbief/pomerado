@@ -18,10 +18,10 @@ import type { HttpFailure, SiteHttpRequest, SiteHttpResult, SiteHttpService } fr
  *   (at least 1), waits the longest `Retry-After` in the batch, else the site's `RateLimit-Reset`,
  *   or a backoff that doubles from `backoffMs` without either, and sends the throttled requests
  *   again first, each at most `maxAttempts` times in all. A wait longer than `maxWaitMs` stops the
- *   batch as `rate_limited`, since waiting it out would outlast the call. So does a second batch in
- *   a row that throttles a request the site had not throttled before, since the site still refuses
- *   fresh requests after the wait; nothing is sent again. A request throttled again on its retry
- *   only uses up its own tries, so one record the site always fails ends `throttled` alone.
+ *   batch as `rate_limited`, since waiting it out would outlast the call. So do two batches in a
+ *   row whose every answer was a throttle, over at least two requests, since the site still
+ *   refuses after the wait; nothing is sent again. One record the site always fails shares its
+ *   batches with answers or is alone in them, so it only uses up its own tries and ends `throttled`.
  * - A block stops the batch at once, and nothing more is sent: a challenge page the host found, a
  *   403 that is not JSON, a 503 HTML page where JSON was asked for, or a 2xx HTML page where JSON
  *   was asked for. It never retries through a block; the challenge and proxy paths deal with it.
@@ -76,7 +76,12 @@ export type BatchOutcome<A> =
 /** Why a batch stopped early, and the request that stopped it. */
 export type BatchStop =
   | { readonly reason: "blocked"; readonly index: number }
-  | { readonly reason: "rate_limited"; readonly index: number; readonly retryAfterMs: number }
+  | {
+      readonly reason: "rate_limited";
+      readonly index: number;
+      /** The site's own wait, when it gave one. */
+      readonly retryAfterMs?: number | undefined;
+    }
   | { readonly reason: "budget" };
 
 export interface BatchRun<A> {
@@ -113,7 +118,6 @@ export async function adaptiveBatch<A>(
 ): Promise<BatchRun<A>> {
   const outcomes: (BatchOutcome<A> | undefined)[] = Array.from({ length: count }, () => undefined);
   const attempts: number[] = Array.from({ length: count }, () => 0);
-  const throttledOnce: boolean[] = Array.from({ length: count }, () => false);
   const queue: number[] = Array.from({ length: count }, (_, index) => index);
   const batches: number[] = [];
   const started = settings.now();
@@ -121,7 +125,8 @@ export async function adaptiveBatch<A>(
     settings.budgetMs !== undefined && settings.now() - started + waitMs >= settings.budgetMs;
   let limit = Math.max(1, Math.min(settings.start, settings.max));
   let throttledBefore = false;
-  let freshLast = false;
+  // The requests of the batch before, when the site throttled every one of them.
+  let wholeLast: readonly number[] | undefined;
   let backoffs = 0;
   let stopped: BatchStop | undefined;
   while (queue.length > 0 && stopped === undefined) {
@@ -150,7 +155,7 @@ export async function adaptiveBatch<A>(
     let waitMs = 0;
     let blockedAt: number | undefined;
     let throttledAt: number | undefined;
-    let fresh = false;
+    let siteWaitGiven: number | undefined;
     let rateLimited: { index: number; retryAfterMs: number } | undefined;
     let resetTooLong: { index: number; retryAfterMs: number } | undefined;
     for (const { index, answer, error } of sent) {
@@ -165,11 +170,9 @@ export async function adaptiveBatch<A>(
       if (answer.kind !== "throttled" && reset === undefined) continue;
       // The first answer that throttled or said no request remains.
       if (throttledAt === undefined) throttledAt = index;
-      // A throttle on a request the site had not throttled before: it refuses fresh requests.
-      if (!throttledOnce[index]) fresh = true;
-      if (answer.kind === "throttled") throttledOnce[index] = true;
       const retryAfterMs = answer.kind === "throttled" ? answer.retryAfterMs : undefined;
-      const siteWaitMs = retryAfterMs ?? (reset === null ? undefined : reset);
+      // A reset of 0 or none gives no wait, so the backoff applies.
+      const siteWaitMs = retryAfterMs ?? (reset === null || reset === 0 ? undefined : reset);
       if (siteWaitMs !== undefined && siteWaitMs > settings.maxWaitMs) {
         // A throttled answer stops the batch; an answer whose headers say none remain stops it
         // only when more is left to send.
@@ -177,28 +180,40 @@ export async function adaptiveBatch<A>(
         else resetTooLong ??= { index, retryAfterMs: siteWaitMs };
         continue;
       }
+      if (siteWaitMs !== undefined) siteWaitGiven = Math.max(siteWaitGiven ?? 0, siteWaitMs);
       waitMs = Math.max(waitMs, siteWaitMs ?? backoffMs);
       if (answer.kind === "throttled" && tries < settings.maxAttempts) again.push(index);
     }
     const throttled = throttledAt !== undefined;
     const left = again.length > 0 || queue.length > 0;
-    // A second batch in a row that throttled a fresh request ends the run with this batch's
-    // answers as they came. A retried request throttled again counts toward its own tries only.
-    const repeat = fresh && freshLast && left;
+    // Two batches in a row the site throttled whole, over at least two requests, end the run with
+    // this batch's answers as they came. One request the site always fails is alone in its
+    // batches or shares them with answers, so it only uses up its own tries.
+    const whole = sent.every(({ answer }) => answer?.kind === "throttled");
+    const repeat =
+      whole && wholeLast !== undefined && left && new Set([...wholeLast, ...batch]).size >= 2;
     if (blockedAt !== undefined) stopped = { reason: "blocked", index: blockedAt };
     else if (rateLimited !== undefined) stopped = { reason: "rate_limited", ...rateLimited };
     else if (resetTooLong !== undefined && left) stopped = { reason: "rate_limited", ...resetTooLong };
     else if (repeat && throttledAt !== undefined)
-      stopped = { reason: "rate_limited", index: throttledAt, retryAfterMs: waitMs };
+      stopped = {
+        reason: "rate_limited",
+        index: throttledAt,
+        ...(siteWaitGiven === undefined ? {} : { retryAfterMs: siteWaitGiven }),
+      };
     else if (throttled && left && overBudget(waitMs)) stopped = { reason: "budget" };
     if (stopped !== undefined) {
       const reason = stopped.reason;
-      for (const index of repeat ? queue : [...again, ...queue])
+      // A repeat keeps each throttled answer; only requests never answered are not sent.
+      const keptBack = repeat
+        ? queue.filter((index) => outcomes[index] === undefined)
+        : [...again, ...queue];
+      for (const index of keptBack)
         outcomes[index] = { index, state: "not_sent", reason, attempts: attempts[index] ?? 0 };
       queue.length = 0;
       break;
     }
-    freshLast = fresh;
+    wholeLast = whole ? batch : undefined;
     if (throttled) {
       limit = Math.max(1, Math.floor(limit / 2));
       throttledBefore = true;
@@ -243,8 +258,9 @@ export function classifyBatchAnswer(
 
 /**
  * The site's rate-limit headers, when they say no request remains: its reset as milliseconds,
- * or null when it gives none. `RateLimit-Remaining: 0` with `RateLimit-Reset` in seconds, or a
- * `RateLimit` header with a policy whose `r` is 0 and its `t` (or `remaining=0` and `reset`).
+ * or null when it gives none. `RateLimit-Remaining: 0` with `RateLimit-Reset` in seconds, else
+ * the `t` of a `RateLimit` header, or a `RateLimit` header with a policy whose `r` is 0 and its
+ * `t` (or `remaining=0` and `reset`).
  * Undefined while requests remain or the headers say nothing. Pasted into the page with
  * `adaptiveBatch`.
  */
@@ -255,13 +271,16 @@ export function batchRateLimitResetMs(
 ): number | null | undefined {
   const seconds = (text: string | null | undefined) =>
     /^\s*\d+(\.\d+)?\s*$/.test(text ?? "") ? Math.round(Number(text) * 1000) : null;
-  if (/^\s*0+\s*$/.test(remaining ?? "")) return seconds(reset);
+  const none = /^\s*0+\s*$/.test(remaining ?? "");
+  const resetMs = none ? seconds(reset) : null;
+  if (resetMs !== null) return resetMs;
   const header = combined ?? "";
   const policies = /\bremaining\s*=/i.test(header) ? [header] : header.split(",");
   let found: number | null | undefined;
   for (const policy of policies) {
     const left = /(?:^|[;,])\s*(?:r|remaining)\s*=\s*(\d+)/i.exec(policy);
-    if (left === null || Number(left[1]) !== 0) continue;
+    // With `RateLimit-Remaining: 0`, a policy that names no count still gives its reset.
+    if (left === null ? !none : Number(left[1]) !== 0) continue;
     const wait = seconds(/(?:^|[;,])\s*(?:t|reset)\s*=\s*(\d+(?:\.\d+)?)/i.exec(policy)?.[1]);
     found = wait === null ? (found ?? null) : Math.max(found ?? 0, wait);
   }
@@ -429,7 +448,7 @@ export const batchRead = (
       const what =
         stopped.reason === "blocked"
           ? "The site blocked the batch"
-          : stopped.retryAfterMs > settings.maxWaitMs
+          : stopped.retryAfterMs !== undefined && stopped.retryAfterMs > settings.maxWaitMs
             ? `The site rate-limited the batch for ${Math.ceil(stopped.retryAfterMs / 1000)} s`
             : "The site throttled two batches in a row";
       return yield* Effect.fail(
