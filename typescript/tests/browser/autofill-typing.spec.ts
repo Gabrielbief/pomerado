@@ -153,6 +153,10 @@ test("the keyboard mode signs in on a page that keeps only what trusted keys typ
   expect(seen.every((key) => key.trusted)).toBe(true);
   const gaps = downs.slice(1).map((key, at) => key.at - (downs[at]?.at ?? 0));
   expect(new Set(gaps.map(Math.round)).size).toBeGreaterThan(1);
+  // A username or password key is released at once, never held as a one-time code's is (60 ms on).
+  const ups = seen.filter((key) => key.type === "keyup");
+  const holds = downs.map((down, at) => (ups[at]?.at ?? down.at) - down.at).sort((a, b) => a - b);
+  expect(holds[Math.floor(holds.length / 2)]).toBeLessThan(55);
 });
 
 test("the paste mode inserts each value with no key events", async ({ page }) => {
