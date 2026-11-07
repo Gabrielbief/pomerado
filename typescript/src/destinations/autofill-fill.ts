@@ -1078,15 +1078,17 @@ const fillRow = (
 
 /**
  * The host's own answer whether the page already sent the step's code (`codeSent`), typed from
- * `since`: no without the hook or a code field the host submits, or when the answer fails.
+ * `since`, asked afresh each time it runs: no without the hook or a code field the host submits,
+ * or when the answer fails or the hook throws.
  */
 const sentByPage = (input: FillInput, since: number): Effect.Effect<boolean> => {
   const code = input.step.fields
     .flatMap((field, index) => (field.slot === "code" ? [input.values[index] ?? ""] : []))
     .join("");
-  return input.codeSent === undefined || code === "" || !codeSentBySite(input.step)
+  const hook = input.codeSent;
+  return hook === undefined || code === "" || !codeSentBySite(input.step)
     ? Effect.succeed(false)
-    : input.codeSent({ since, code }).pipe(
+    : Effect.flatten(Effect.try(() => hook({ since, code }))).pipe(
         // error-reporting-allow: typed-recovery a host that can't tell whether the page sent the code leaves the click to the looks before it, as without the hook
         Effect.orElseSucceed(() => false),
       );

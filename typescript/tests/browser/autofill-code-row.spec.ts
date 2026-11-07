@@ -102,12 +102,27 @@ const serve = async (page: Page, screen: string) => {
 /**
  * Fills the step with `values` by keyboard, as the local host signs in. The host's own reading of
  * whether the page sent the code (`codeSent`) watches the page's requests, as a host's request
- * log does, and keeps what it was asked.
+ * log does, reads them when it is called and keeps what it was asked. `hook: "none"` passes no
+ * reading, as an older host does, and `"throws"` one that throws.
  */
-const fill = async (page: Page, step: AutofillStep, values: readonly string[]) => {
+const fill = async (
+  page: Page,
+  step: AutofillStep,
+  values: readonly string[],
+  hook: "reads" | "none" | "throws" = "reads",
+) => {
   const requests: { readonly at: number; readonly body: string }[] = [];
   page.on("request", (request) => requests.push({ at: Date.now(), body: request.postData() ?? "" }));
   const asked: { readonly since: number; readonly code: string }[] = [];
+  const codeSent = (typed: { readonly since: number; readonly code: string }) => {
+    asked.push(typed);
+    if (hook === "throws") throw new Error("Request log unavailable");
+    const sent = requests.some(
+      ({ at, body }) =>
+        at >= typed.since && [...new URLSearchParams(body).values()].join("") === typed.code,
+    );
+    return Effect.succeed(sent);
+  };
   const host = await hostPage(page);
   const inspection = await Effect.runPromise(
     inspectAutofillStep({ step, page: host, siteOrigin: site, authenticationOrigins: [] }),
@@ -122,15 +137,7 @@ const fill = async (page: Page, step: AutofillStep, values: readonly string[]) =
       keyboard: (await hostKeyboard(page)).keyboard,
       typing: "keyboard",
       settleMs: 2_000,
-      codeSent: (typed) =>
-        Effect.sync(() => {
-          asked.push(typed);
-          return requests.some(
-            ({ at, body }) =>
-              at >= typed.since &&
-              [...new URLSearchParams(body).values()].join("") === typed.code,
-          );
-        }),
+      ...(hook === "none" ? {} : { codeSent }),
     }),
   );
   expectNotCarried(host.calls, code);
@@ -191,16 +198,20 @@ test("a split code whose boxes move the focus on is typed through its first box:
   test.info().annotations.push({ type: "key holds (ms)", description: holds(felt).join(", ") });
 });
 
-test("a split code whose boxes keep the focus is typed box by box after its first key, and every box sends its digit once", async ({
+test("a split code whose boxes keep the focus has its first box typed, emptied and typed again box by box, and sends each digit once", async ({
   page,
 }) => {
   const { felt, sent } = await serve(page, rowScreen({ advances: false }));
-  const { report } = await fill(page, rowStep, [...code]);
+  const { report, focusCalls } = await fill(page, rowStep, [...code]);
   expect(report).toMatchObject({
     outcome: "filled",
     fields: rowStep.fields.map(() => ({ slot: "code", status: "filled" })),
     submit: "clicked",
   });
+  // The row's click into the first box and its first key, then a focus call per box from the first.
+  expect(focusCalls).toEqual([0, 0, 1, 2, 3, 4, 5]);
+  expect(boxEvents(felt, "mousedown")).toEqual([expect.objectContaining({ field: "d1", trusted: true })]);
+  expect(boxEvents(felt, "keydown")[0]).toMatchObject({ field: "d1", key: code[0], trusted: true });
   expect(felt.filter((event) => event.type === "click" && event.field === "verify")).toHaveLength(1);
   expect(sent).toEqual([code]);
 });
@@ -216,6 +227,25 @@ test("a split code whose page sends it itself on the last digit and keeps its bo
     submit: "page",
   });
   expect(felt.filter((event) => event.type === "click" && event.field === "verify")).toEqual([]);
+  expect(sent).toEqual([code]);
+});
+
+test("without the host's reading, a split code whose page sends it itself and keeps its boxes is still clicked, as before", async ({
+  page,
+}) => {
+  const { felt, sent } = await serve(page, rowScreen({ advances: true, sends: "request" }));
+  const { report } = await fill(page, rowStep, [...code], "none");
+  expect(report).toMatchObject({ outcome: "filled", submit: "clicked" });
+  expect(felt.filter((event) => event.type === "click" && event.field === "verify")).toHaveLength(1);
+  expect(sent).toEqual([code, code]);
+});
+
+test("a host reading that throws counts as not sent, and Verify is clicked once", async ({ page }) => {
+  const { felt, sent } = await serve(page, rowScreen({ advances: true }));
+  const { report, asked } = await fill(page, rowStep, [...code], "throws");
+  expect(report).toMatchObject({ outcome: "filled", submit: "clicked" });
+  expect(asked.length).toBeGreaterThan(1);
+  expect(felt.filter((event) => event.type === "click" && event.field === "verify")).toHaveLength(1);
   expect(sent).toEqual([code]);
 });
 
