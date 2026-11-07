@@ -1632,7 +1632,11 @@ const declinedExample = {
 const signInThenDecline = (
   steps: readonly (object | MintFailure)[],
   overrides: Parameters<typeof fixture>[1] = {},
-  report: { readonly reason: string; readonly explanation: string } = declinedExample,
+  report: {
+    readonly reason: string;
+    readonly explanation: string;
+    readonly intent?: string;
+  } = declinedExample,
 ) => {
   let executions = 0;
   return fixture(
@@ -1729,6 +1733,74 @@ it.each([
     });
   },
 );
+
+// A report rewritten to sign-in unavailable still says why the build stopped. Its caller reads the
+// minter's explanation only after the pipeline a blocked explanation takes: the login's secrets
+// masked, host-private values removed and Guardian's review of a blocked outcome allowing it.
+it("keeps the reviewed explanation of a report ended as sign-in unavailable", async () => {
+  const reviewed: unknown[] = [];
+  const f = await signInThenDecline(
+    [submittedScreen, rejectionUnconfirmed],
+    {
+      projection: portableMintProjection(["Hunter2-secret", "482913"]),
+      redactCallerText: (text) => text.replaceAll("acct-7731", "[account]"),
+      reviewQuestion: (candidate, context) =>
+        Effect.sync(() => {
+          reviewed.push({ candidate, blockedOutcome: context?.blockedOutcome });
+          return { outcome: "allow_business" as const, rationale: "Plain." };
+        }),
+    },
+    {
+      reason: "site_lacks_capability",
+      explanation:
+        "The site asks account acct-7731 for a password (Hunter2-secret was refused) and offers no emailed code such as 482913.",
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({
+    recoveryReason: "sign_in_unavailable",
+    stopReason: "sign_in_failed",
+    stopExplanation:
+      "The site asks account [account] for a password ([private] was refused) and offers no emailed code such as [private].",
+  });
+  expect(JSON.stringify([outcome, reviewed])).not.toMatch(/Hunter2-secret|482913|acct-7731/u);
+  expect(reviewed).toEqual([expect.objectContaining({ blockedOutcome: true })]);
+});
+
+it("keeps no explanation of a report ended as sign-in unavailable that Guardian did not allow", async () => {
+  const f = await signInThenDecline(
+    [submittedScreen, rejectionUnconfirmed],
+    {
+      reviewQuestion: () =>
+        Effect.succeed({ outcome: "reword" as const, rationale: "It names an email address." }),
+    },
+    {
+      reason: "site_lacks_capability",
+      explanation: "The site wants owner@example.test to confirm a link before it signs in.",
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ recoveryReason: "sign_in_unavailable" });
+  expect(outcome).not.toHaveProperty("stopExplanation");
+  expect(JSON.stringify(outcome)).not.toContain("owner@example.test");
+});
+
+// A caller_input explanation asks its caller to change the request, which a sign-in unavailable
+// ending never does, so that ending keeps none of it.
+it("keeps no explanation of a caller_input report ended as sign-in unavailable", async () => {
+  const f = await signInThenDecline([submittedScreen, rejectionUnconfirmed], {}, {
+    reason: "caller_input",
+    explanation: conflictExplanation,
+    intent: "The request says read public data, and the record contradicts its source.",
+  });
+  const outcome = await f.run();
+  expect(outcome).not.toHaveProperty("blocked");
+  expect(outcome).toMatchObject({
+    recoveryReason: "sign_in_unavailable",
+    stopReason: "sign_in_failed",
+  });
+  expect(outcome).not.toHaveProperty("stopExplanation");
+});
 
 /** What an accepted or rewritten ending's `phase: "blocked"` diagnostic records. */
 const blockedDiagnostic = (outcome: { readonly diagnostics: readonly string[] }) =>

@@ -7220,9 +7220,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       !signInAbandoned
                     ) {
                       const sessionLoss = dependencies.signInSessionLoss?.();
+                      // The minter's explanation still says why, kept only as a last answer is:
+                      // once Guardian's review of a blocked outcome allows its caller to read it.
+                      // A caller_input explanation asks for a changed request, so it keeps none.
+                      const stopExplanation =
+                        terminal === undefined && report.reason !== "caller_input"
+                          ? yield* reviewedStopExplanation(explanation)
+                          : undefined;
                       terminal ??= {
                         build: "incomplete",
                         recoveryReason: "sign_in_unavailable",
+                        ...(stopExplanation === undefined ? {} : { stopExplanation }),
                         summary: signInUnavailableSummary(undefined, undefined, sessionLoss),
                       };
                       yield* diagnose({
@@ -7231,6 +7239,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         reported: report.reason,
                         ...(hostRefusals === undefined ? {} : { hostRefusals }),
                         ...(sessionLoss === undefined ? {} : { sessionLoss }),
+                        explanationShown: stopExplanation !== undefined,
                       });
                       return endedForSignIn;
                     }
