@@ -36,7 +36,10 @@ export const InsertionRefusal = Schema.Literal(
   "origin_changed",
   /** The bound field no longer holds its document's focus: another element, or none, does. */
   "focus_moved",
-  /** The document itself does not hold the browser's focus. */
+  /**
+   * No longer given: a field that holds its document's focus takes the value even when the browser
+   * reports the window unfocused, as some headless browsers do. Kept for hosts that map each refusal.
+   */
   "document_unfocused",
   /** A private answer's observed question no longer reads as it did when the host inspected it. */
   "question_changed",
@@ -257,7 +260,6 @@ const bindingGuard = `(field, key, origin) => {
     if (document.defaultView !== frame || frame.document !== document) return "frame_changed";
     if (frame.origin !== origin) return "origin_changed";
     if (!holdsFocus(field)) return "focus_moved";
-    if (!document.hasFocus()) return "document_unfocused";
     if (binding.questionRequired &&
         (typeof binding.checkQuestion !== "function" || !binding.checkQuestion())) return "question_changed";
   };
