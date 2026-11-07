@@ -503,7 +503,8 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "commit_marks_undeclared"
     /**
      * The composed script declares a commit step no act step of the session ever entered, and
-     * `write.commitsUnproven` does not name it as one after the last mark the session entered.
+     * `write.commitsUnproven` does not name it as one after the last mark the session entered, or
+     * as one the host lets it skip (`skippableCommits`).
      */
     | "commit_marks_unentered"
     /**
