@@ -268,6 +268,12 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "Spread `listInputFields` into the input schema's fields and `listOutputFields` into the output schema's",
   ],
   ["pagination", "Never recreate a hold, draft, upload, payment token or write in order to page."],
+  // A request for the whole list in one result still gets one page per call, so a call never
+  // reads every page of a long list at once.
+  [
+    "pagination",
+    "returns one page per call and a cursor for the next, even when the request asks for the whole list in one result.",
+  ],
   ["writes", "A write build changes something real on the caller's account"],
   ["writes", "Prefer confirming the write from its commit request."],
   ["writes", "- When a read-back is needed, the first one that matches confirms the write; stop there."],
@@ -1303,7 +1309,7 @@ it("renders the pinned standalone authoring", async () => {
     ["583849972e0fb5b1bc3d9e8a87848b2e655619085eeaefc0215a1b6c2cdfa105", "search"],
     ["ba3440d64be27ffb3572a1e197705110ff31567144febcb6e1eab9ddfcf43840", "auth"],
     ["892ed73535d99bbd6a0b54f9351d8f0995267956de380f3cff59bb3f6c0d7213", "testing"],
-    ["2b559ad88157f28be2a054787f4c736cf192bb825760bdf3050c01a59d060ba8", "pagination"],
+    ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["2dd7cabe26d127855e4a8d2d6975b23e8b0999e6d1e227a1b6157dcb32e5c781", "forms"],
     ["1a915d0e49ee6fbcd1c99796adc0c12d44874b5df82f452794bcd59bba2c4359", "writes"],
     ["8e42776229364b5eebc9899c429f7716a5cc801497fbef09084bb1e8f4841e77", "cart"],
