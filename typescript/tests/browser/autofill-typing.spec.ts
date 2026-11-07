@@ -5,6 +5,7 @@ import { inspectAutofillStep, type AutofillStep } from "../../src/destinations/a
 import { fillAutofillStep } from "../../src/destinations/autofill-fill.js";
 import type { CredentialTypingMode } from "../../src/destinations/credential-keyboard.js";
 import { expectOriginsOnly, hostKeyboard, hostPage } from "./autofill-host-page.js";
+import { isolatedWorldName } from "./isolated-locator-page.js";
 
 // The host types an autofill step's values itself, over its own DevTools session, into the field a
 // Kernel call focused. Chromium must generate trusted input events
@@ -326,6 +327,32 @@ for (const { cause, fault } of [
       expect(recorded).not.toContain(secret);
     expect(await page.locator("#other").inputValue()).toBe("");
     expect(received).toEqual([]);
+  });
+
+// Some headless browsers report the window unfocused while the bound field holds the focus.
+for (const typing of ["keyboard", "paste"] as const)
+  test(`the ${typing} mode types into the focused field while the browser reports the window unfocused`, async ({
+    page,
+  }) => {
+    const received = await serve(page, loginScreen);
+    const unfocused = "Document.prototype.hasFocus = () => false; document.hasFocus()";
+    expect(await page.evaluate(unfocused)).toBe(false);
+    const cdp = await page.context().newCDPSession(page);
+    const { frameTree } = await cdp.send("Page.getFrameTree");
+    const world = await cdp.send("Page.createIsolatedWorld", {
+      frameId: frameTree.frame.id,
+      worldName: isolatedWorldName,
+    });
+    const answer = await cdp.send("Runtime.evaluate", {
+      expression: unfocused,
+      contextId: world.executionContextId,
+      returnByValue: true,
+    });
+    expect(answer.result.value).toBe(false);
+    await cdp.detach();
+    const report = await signIn(page, loginStep, typing);
+    expect(report).toMatchObject({ outcome: "filled", submit: "clicked" });
+    expect(received.map((form) => Object.fromEntries(form))).toEqual([{ username, password }]);
   });
 
 test("a page cannot copy a credential binding onto a replacement control", async ({ page }) => {
