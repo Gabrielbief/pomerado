@@ -3144,13 +3144,23 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           "Nothing changed. Submit the same mint_update again for a fresh review; the task stays as it was until an update applies.",
       };
       const reviewUnavailableFeedback = (error: MintFailure) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           terminal = {
             build: "incomplete",
             hostFailure: "review_unavailable",
             summary:
               "Guardian review could not complete. No review approval was obtained; recorded effects and claimed examples remain preserved.",
           };
+          // The outcome names why: the review's failure code, and the model provider's own code and
+          // HTTP status when it refused the review's request.
+          const context = error.failureDetail?.context;
+          yield* diagnose({
+            phase: "review",
+            reason: "review_unavailable",
+            code: error.reviewFailure,
+            providerCode: context?.["providerCode"],
+            httpStatus: context?.["httpStatus"],
+          });
           return reviewUnavailableAnswer(
             error,
             "Review did not complete; this is not a Guardian deny or escalation decision. End this attempt without publication. Do not change site code to repair review infrastructure or automatically retry execution. Preserve prior effects and claimed examples; reconcile possibly executed operations before any further effect. Missing user authority or credentials has not been established.",
