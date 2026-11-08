@@ -1165,6 +1165,21 @@ describe("the publication policy", () => {
       "So is a read's InvalidInput thrown because a caller's number limit lies beyond a stepped scale's end or between its steps: prefer setting the scale's end, or the nearest step inside the caller's bound, and returning the applied value.",
     );
   });
+
+  // A site that quietly stops answering a data call can still show its no-results message while
+  // another part of the same page shows results for the same query. Returning that as an honest
+  // empty list hides the site's failure. The rule sits in the output rules, which the review and
+  // the minter's publication-review reference both read.
+  it("finds an empty result that other evidence on the same page contradicts", () => {
+    const wrongFailure = publicationOutputPolicy.slice(
+      publicationOutputPolicy.indexOf("Wrong failure:"),
+      publicationOutputPolicy.indexOf("Strict name check:"),
+    );
+    expect(wrongFailure).toContain(
+      "So is an empty result that other evidence on the same page contradicts for the same query, even beside the site's no-results message: its fix throws OperationFailure naming what that evidence shows.",
+    );
+    expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
+  });
 });
 
 const message = (value: unknown): ModelResponse["output"][number] => ({
