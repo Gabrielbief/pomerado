@@ -1179,6 +1179,22 @@ it("has a write retry an expired quote once, which Guardian's reviews accept", a
   );
 });
 
+// A commit the page itself refused, or one the site answered with an error other than a server error
+// whose record then reads back as the script read it before the mark, goes back unsent with the
+// site's proof, so the run reports the write not applied. A read-back counts only for fields the
+// write sends a different value for, and only toward a refusal, never another click. Guardian counts
+// a put-back that rests on a timeout, silence or a missing element as a finding.
+it("has a write put a step back only on the site's own refusal or an unchanged read-back", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
+  expect(writes).toContain(
+    "When the page shows the site's own refusal of that write, or the site answered the commit with an error that is not a server error and a fresh read of the same view you read before the mark shows each field whose sent value differs from that read unchanged, prefer the same put-back and ending as above; never on silence or a missing element.",
+  );
+  expect(guardianPublicationPolicy).toContain(
+    "Nor is one after the site answered the click with an error that is not a server error and a fresh read of the same view the script read before the mark showed each field whose sent value differs from that read unchanged, followed by a refusal, or an `OperationFailure`, with the site's words, and no further click. A `notCommitted` resting on a timeout, silence or a missing element is a confirmation finding.",
+  );
+});
+
 // A write still refuses an option the page does not offer, unless the caller's own task asks for
 // whatever the site ends up with: then it follows the site's preselected substitute and returns it.
 it("has a write follow the site's substitute only when the caller's task asks for what it ends up with", async () => {
@@ -1313,7 +1329,7 @@ it("renders the pinned standalone authoring", async () => {
     ["f3c485485bf431f4bf4b046f5f9629bef49c2b8b4b3ca8e187e1abe0f96a5976", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["2dd7cabe26d127855e4a8d2d6975b23e8b0999e6d1e227a1b6157dcb32e5c781", "forms"],
-    ["d4966d3b46136bd84e1039914f02efa95fa62031d5a01711ead8bfe104715160", "writes"],
+    ["f8515e1b392188018212dc0fc23c359498b6af21273dfb37ada80a29782b84d5", "writes"],
     ["a0fd87e18a6655ecebdd988e6f7ea402748af5189bee0c84233b7d9173725c34", "cart"],
     ["da2819239f93381dfb614459659082e075ad8502f9851b879bade2582aed07cb", "caller-input"],
     ["8a3ae8ebe6c3d4b946265c44f9eeb1e092f356666cac629f050faf24ef49eb6d", "publication"],
