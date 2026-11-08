@@ -205,7 +205,8 @@ export interface KernelOperationContext<
    * enter the step for one more click. Pass `siteRefused` only for such a refusal. The page's own
    * refusal of that write counts, and so does an answer with an error that is not a server error
    * when a fresh read of the same view the script read before the mark shows each field whose sent
-   * value differs from that read unchanged; a timeout, silence or a missing element never does.
+   * value differs from that read unchanged, but only to end the run; a timeout, silence or a
+   * missing element never does.
    * When the page flags fields or shows a validation message after the click, call
    * `blockingRequiredFields` first; when it returns `null` and the same form shows again, still
    * holding the values the step filled, with no next page or confirmation, the site refused the
