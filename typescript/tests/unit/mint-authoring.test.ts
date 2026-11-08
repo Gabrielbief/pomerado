@@ -448,6 +448,22 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "workspace/AGENTS.md",
     "When the owner decides only whether to go on as asked or stop, prefer a `confirm` question whose no stops the build over a stop option in a `choice` question, so you can end it as `owner_declined` on their no.",
   ],
+  // A site can quietly stop answering the data request its results come from while its page shows
+  // its no-results message and another part of the page still shows results for the same inputs.
+  // The skills say what the publication review's "Wrong failure" rule finds, so the minter writes
+  // the failure Guardian expects rather than the empty list it denies.
+  [
+    "search",
+    "got the site's no-results message returns an empty list, never an error, unless other evidence on the same page contradicts it.",
+  ],
+  [
+    "search",
+    "that answer stands. An empty answer that other evidence on the same page contradicts for the same inputs is a failure too: throw `OperationFailure` naming what that evidence shows.",
+  ],
+  [
+    "publication",
+    'a search or filter with no results returns the empty result, never a throw, unless other evidence on the same page contradicts it for the same inputs: then it throws `OperationFailure` naming what that evidence shows ("Wrong failure");',
+  ],
 ];
 
 /*
@@ -1326,7 +1342,7 @@ it("renders the pinned standalone authoring", async () => {
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
     ["2c56fe1cd69f0178126429542a8996a81141d3885a3f455ccebb2360915c00f3", "core"],
-    ["583849972e0fb5b1bc3d9e8a87848b2e655619085eeaefc0215a1b6c2cdfa105", "search"],
+    ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
     ["ba3440d64be27ffb3572a1e197705110ff31567144febcb6e1eab9ddfcf43840", "auth"],
     ["f3c485485bf431f4bf4b046f5f9629bef49c2b8b4b3ca8e187e1abe0f96a5976", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
@@ -1334,7 +1350,7 @@ it("renders the pinned standalone authoring", async () => {
     ["1df721ca0c488b7f13b7f84e78f5a1ce29b91ab81e30f80e08ff14c77df44178", "writes"],
     ["a0fd87e18a6655ecebdd988e6f7ea402748af5189bee0c84233b7d9173725c34", "cart"],
     ["da2819239f93381dfb614459659082e075ad8502f9851b879bade2582aed07cb", "caller-input"],
-    ["8a3ae8ebe6c3d4b946265c44f9eeb1e092f356666cac629f050faf24ef49eb6d", "publication"],
+    ["7416fcc1004dd8d2d7a71c995c1c63b40b3786e8b47b9343ccbf3715eb1664d5", "publication"],
     ["ebd119ab5b58bcb260019920a0be4756bd991de88171f5181a5d263cdb5a54b6", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
@@ -1455,7 +1471,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     ...on.digests.filter(([, name]) => name === "search"),
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
-    ["515a858186eb095f058cb04a70e82095ad01e86173361c02a85908890ccb3a2e", "search"],
+    ["052712afaba095b3ef925f265b1b1a49e4cc3838eee0f7318dad4f82663a8da8", "search"],
     ["9125b3220bdc907627ab2ff29e0411b1269251b2114c6c81e83f5b0c07d9787a", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(

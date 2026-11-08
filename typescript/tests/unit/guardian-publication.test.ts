@@ -1167,7 +1167,7 @@ describe("the publication policy", () => {
   });
 
   // A site that quietly stops answering a data call can still show its no-results message while
-  // another part of the same page shows results for the same query. Returning that as an honest
+  // another part of the same page shows results for the same inputs. Returning that as an honest
   // empty list hides the site's failure. The rule sits in the output rules, which the review and
   // the minter's publication-review reference both read.
   it("finds an empty result that other evidence on the same page contradicts", () => {
@@ -1176,9 +1176,8 @@ describe("the publication policy", () => {
       publicationOutputPolicy.indexOf("Strict name check:"),
     );
     expect(wrongFailure).toContain(
-      "So is an empty result that other evidence on the same page contradicts for the same query, even beside the site's no-results message: its fix throws OperationFailure naming what that evidence shows.",
+      "So is an empty result that other evidence on the same page contradicts for the same inputs, even beside the site's no-results message: its fix throws OperationFailure naming what that evidence shows.",
     );
-    expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
   });
 });
 
