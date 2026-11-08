@@ -386,7 +386,7 @@ describe("rankChoices extra words", () => {
   const extraRank = (choices: readonly PickerChoice[], ...wanted: string[]) =>
     rankChoices(choices, wanted, foldChoiceText, { extraWords: true });
 
-  test("with extraWords, a name holding every word of the value in any order, stems included, matches last", () => {
+  test("with extraWords, a name holding every word of the value in any order, plurals included, matches last", () => {
     const results = [choice("Red Seedless Grapes"), choice("Green Seedless Grapes")];
     // Without the option, a name with a word the value lacks between its words matches nothing.
     expect(rank(results, "green grapes")).toEqual({ status: "missing" });
