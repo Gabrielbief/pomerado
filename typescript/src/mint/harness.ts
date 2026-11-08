@@ -7302,8 +7302,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     // unavailable, worded by what the host saw, and its caller is never told to
                     // change the request. The owner's own no, a question they left unanswered and
                     // their choice to end the build keep their endings, a policy report renamed to
-                    // one included. A host refusal a later finish_build got past is still a
-                    // refusal on record.
+                    // one included, and so does a stop the caller's own request set, which a
+                    // caller_input report cites: such a stop may fall on the sign-in itself. A
+                    // host refusal a later finish_build got past is still a refusal on record.
                     // A host_refused report keeps its reason when a host check stopped the build
                     // apart from the sign-in (`hostRefusalApartFromSignIn`), such as a sign-in
                     // screen refused at its destination after the login went out. One that stands
@@ -7315,6 +7316,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ending.reason !== "owner_declined" &&
                       ending.reason !== "question_unanswered" &&
                       ending.reason !== "owner_ended" &&
+                      ending.reason !== "caller_input" &&
                       !("apartFromSignIn" in ending && ending.apartFromSignIn === true) &&
                       (signInUnconfirmed ||
                         (signInRefusalOnly && !hostRefused && !hostRefusalPassed)) &&
@@ -7325,9 +7327,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       const sessionLoss = dependencies.signInSessionLoss?.();
                       // The minter's explanation still says why, kept only as a last answer is:
                       // once Guardian's review of a blocked outcome allows its caller to read it.
-                      // A caller_input explanation asks for a changed request, so it keeps none.
                       const stopExplanation =
-                        terminal === undefined && report.reason !== "caller_input"
+                        terminal === undefined
                           ? yield* reviewedStopExplanation(explanation)
                           : undefined;
                       terminal ??= {

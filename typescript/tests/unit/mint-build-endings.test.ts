@@ -1785,23 +1785,6 @@ it("keeps no explanation of a report ended as sign-in unavailable that Guardian 
   expect(JSON.stringify(outcome)).not.toContain("owner@example.test");
 });
 
-// A caller_input explanation asks its caller to change the request, which a sign-in unavailable
-// ending never does, so that ending keeps none of it.
-it("keeps no explanation of a caller_input report ended as sign-in unavailable", async () => {
-  const f = await signInThenDecline([submittedScreen, rejectionUnconfirmed], {}, {
-    reason: "caller_input",
-    explanation: conflictExplanation,
-    intent: "The request says read public data, and the record contradicts its source.",
-  });
-  const outcome = await f.run();
-  expect(outcome).not.toHaveProperty("blocked");
-  expect(outcome).toMatchObject({
-    recoveryReason: "sign_in_unavailable",
-    stopReason: "sign_in_failed",
-  });
-  expect(outcome).not.toHaveProperty("stopExplanation");
-});
-
 /** What an accepted or rewritten ending's `phase: "blocked"` diagnostic records. */
 const blockedDiagnostic = (outcome: { readonly diagnostics: readonly string[] }) =>
   outcome.diagnostics
@@ -2509,6 +2492,194 @@ it("keeps owner_ended after an unconfirmed sign-in", async () => {
   expect(await f.run()).toMatchObject({
     blocked: { reason: "owner_ended" },
     stopReason: "owner_ended",
+  });
+});
+
+// The owner's no and a question they left unanswered keep their endings too, sign-in or not.
+it.each([
+  {
+    reason: "owner_declined",
+    steps: [
+      signIn,
+      call("request_input", {
+        questions: [{ id: "go", type: "confirm", prompt: "May the build open the account page?" }],
+      }),
+    ],
+  },
+  { reason: "question_unanswered", steps: [call("request_input", ask("Which plan?")), signIn] },
+] as const)("keeps $reason after an unconfirmed sign-in", async ({ reason, steps }) => {
+  const f = await fixture(
+    (_request, index) =>
+      [
+        ...steps,
+        call("report_blocked", { reason, explanation: "The build needs the owner's answer." }),
+      ][index] ?? prose("Stopping."),
+    {
+      reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
+        beforeDispatch({ reviewId: "review_sign_in", action: "authentication" }).pipe(
+          Effect.as(submittedScreen),
+        ),
+      ...(reason === "owner_declined"
+        ? {
+            askInput: () =>
+              Effect.succeed({ go: { type: "confirm", value: { confirmed: false } } } as const),
+          }
+        : {}),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ blocked: { reason }, stopReason: reason });
+  expect(outcome).not.toHaveProperty("recoveryReason");
+});
+
+// The caller's own request may set a stop on the sign-in itself, such as a second code screen it
+// asks to be told about. Meeting that stop is the caller's rule, not the site's sign-in failing,
+// so a caller_input report keeps its ending while the sign-in never confirmed, or while Guardian's
+// final refusal of a sign-in step is the only refusal on record, as the owner's own endings do.
+// Its explanation takes Guardian's review of a blocked outcome, as any blocked ending's does.
+const stopOnSecondCode = {
+  intent:
+    "Sign in and read the account's plan name. If the site asks for a second verification code, stop and say which kind it asks for.",
+};
+const secondCodeReport = {
+  reason: "caller_input",
+  explanation:
+    "The site asks for a second verification code, sent by email, so the build stopped as the request says.",
+  intent:
+    "The request says: if the site asks for a second verification code, stop and say which kind.",
+};
+
+/**
+ * A build with `stopOnSecondCode`'s request that signs in through `steps`, as `signInThenDecline`
+ * does, then sends each of `reports` in turn.
+ */
+const signInThenStop = (
+  steps: readonly (object | MintFailure)[],
+  reports: readonly object[],
+  overrides: Parameters<typeof fixture>[1] = {},
+) => {
+  let executions = 0;
+  return fixture(
+    (_request, index) =>
+      [
+        ...steps.map((_, step) => call("execute", authenticate, `sign_in_${step}`)),
+        ...reports.map((report, at) => call("report_blocked", report, `report_${at}`)),
+      ][index] ?? prose("Stopping."),
+    {
+      reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) => {
+        const step = steps[executions++] ?? submittedScreen;
+        return step instanceof MintFailure
+          ? Effect.fail(step)
+          : beforeDispatch({ reviewId: "review_sign_in", action: "authentication" }).pipe(
+              Effect.as(step as typeof submittedScreen),
+            );
+      },
+      ...overrides,
+    },
+    stopOnSecondCode,
+  );
+};
+
+it.each([
+  { name: "the sign-in never confirmed", steps: [submittedScreen] },
+  {
+    name: "its only refusal is Guardian's final refusal of the sign-in",
+    steps: [refusedSignIn("final")],
+  },
+])("ends a caller_input report as caller_input with its reviewed explanation while $name", async ({
+  steps,
+}) => {
+  const reviewed: unknown[] = [];
+  const f = await signInThenStop(steps, [secondCodeReport], {
+    reviewQuestion: (candidate, context) =>
+      Effect.sync(() => {
+        reviewed.push({ candidate, blockedOutcome: context?.blockedOutcome });
+        return { outcome: "allow_business" as const, rationale: "Plain." };
+      }),
+  });
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "caller_input", explanation: secondCodeReport.explanation },
+    stopReason: "caller_input",
+  });
+  expect(outcome).not.toHaveProperty("recoveryReason");
+  expect(reviewed).toEqual([
+    {
+      candidate: {
+        questions: [{ id: "blocked", type: "text", prompt: secondCodeReport.explanation }],
+      },
+      blockedOutcome: true,
+    },
+  ]);
+  expect(blockedDiagnostic(outcome)).toMatchObject({
+    reason: "caller_input",
+    explanationReview: "allow_business",
+  });
+  expect(blockedDiagnostic(outcome)).not.toHaveProperty("reported");
+  // The report ended the build at once.
+  expect(f.requests).toHaveLength(steps.length + 1);
+});
+
+// A review that asks for other words, or that is unavailable for now, sends the report back as it
+// does any blocked report's, and the build goes on, never ending as sign-in unavailable.
+it.each([
+  {
+    review: "asks for other words",
+    first: Effect.succeed({ outcome: "reword" as const, rationale: "Say less." }),
+    answer: "blocked_explanation_rejected",
+  },
+  {
+    review: "is unavailable for now",
+    first: Effect.fail(new MintFailure({ code: "ReviewUnavailable", reviewFailure: "Unavailable" })),
+    answer: "review_unavailable",
+  },
+])(
+  "sends a caller_input report back while the sign-in never confirmed when its review $review",
+  async ({ first, answer }) => {
+    const revised = "The site asks for a second code by email, so the build stopped as asked.";
+    let reviews = 0;
+    const f = await signInThenStop(
+      [submittedScreen],
+      [secondCodeReport, { ...secondCodeReport, explanation: revised }],
+      {
+        reviewQuestion: () =>
+          reviews++ === 0
+            ? first
+            : Effect.succeed({ outcome: "allow_business" as const, rationale: "Plain." }),
+      },
+    );
+    const outcome = await f.run();
+    expect(lastResult(f.requests[2])).toContain(answer);
+    expect(outcome).toMatchObject({
+      build: "incomplete",
+      blocked: { reason: "caller_input", explanation: revised },
+      stopReason: "caller_input",
+    });
+    expect(outcome).not.toHaveProperty("recoveryReason");
+    expect(reviews).toBe(2);
+  },
+);
+
+// A review that fails for good, such as one over the model's input limit, ends the build blocked
+// with the reason alone, as it does any blocked report.
+it("ends a caller_input report with its reason alone while the sign-in never confirmed when its review fails for good", async () => {
+  const f = await signInThenStop([submittedScreen], [secondCodeReport], {
+    reviewQuestion: () =>
+      Effect.fail(new MintFailure({ code: "ReviewUnavailable", reviewFailure: "InputTooLarge" })),
+  });
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "caller_input" },
+    stopReason: "caller_input",
+    summary: "The build is blocked (caller_input).",
+  });
+  expect(outcome.blocked).not.toHaveProperty("explanation");
+  expect(outcome).not.toHaveProperty("recoveryReason");
+  expect(blockedDiagnostic(outcome)).toMatchObject({
+    reason: "caller_input",
+    explanationReview: "unavailable",
   });
 });
 
