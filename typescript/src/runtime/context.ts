@@ -63,8 +63,9 @@ export interface CommitMark {
 export interface NotCommittedOptions {
   /**
    * The site's own answer refused the step's click as a whole, with nothing created: its commit
-   * response or its page refused that write, or a fresh read of the record after that answer shows
-   * every field the write changes still at the script's read before the mark.
+   * response or its page refused that write, or it answered with an error that is not a server
+   * error and a fresh read of the same view the script read before the mark shows each field whose
+   * sent value differs from that read unchanged.
    */
   readonly siteRefused?: true;
 }

@@ -26,17 +26,18 @@ export default defineOperation(io, async ({ kernel, sessionId, enteringCommit, n
   return { quantity: answer.quantity };
 });`;
 /**
- * A synthetic cart add that reads its line before the mark and again after the site answered,
- * finds it as it was, and puts the step back when `putBack` says so.
+ * A synthetic cart add that reads its line before the mark, sends a quantity that differs from it,
+ * gets an error answer that is not a server error, reads the same view again, finds the line as it
+ * was, and puts the step back when `putBack` says so.
  */
 const unchangedReadBack = (putBack: boolean) => `${header}
 export default defineOperation(io, async ({ kernel, sessionId, enteringCommit, notCommitted, verified, errors }) => {
   const read = async () => (await kernel.browsers.playwright.execute(sessionId, { code: "return readLine();" })).result;
   const before = await read();
   enteringCommit("add-to-cart");
-  await kernel.browsers.playwright.execute(sessionId, { code: "return add();" });
+  const answer = (await kernel.browsers.playwright.execute(sessionId, { code: "return add(" + (before.quantity + 1) + ");" })).result;
   const after = await read();
-  if (after.quantity === before.quantity) {
+  if (answer.status >= 400 && answer.status < 500 && after.quantity === before.quantity) {
     ${putBack ? 'notCommitted("add-to-cart", { siteRefused: true });' : ""}
     throw new errors.InvalidInput(after.notice);
   }
@@ -80,8 +81,8 @@ it("reports a write not applied when its commit response refused it and the scri
   });
 });
 
-it("reports a write not applied when its record read back unchanged and the script put the step back", async () => {
-  const failure = await outcomeOf(unchangedReadBack(true), site({ status: 200 }));
+it("reports a write not applied when its record read back unchanged after an error answer and the script put the step back", async () => {
+  const failure = await outcomeOf(unchangedReadBack(true), site({ status: 422 }));
   expect(failure.outcome).toMatchObject({
     code: "input_rejected",
     writeStatus: "not_applied",
@@ -92,7 +93,7 @@ it("reports a write not applied when its record read back unchanged and the scri
 
 // The put-back decides: the same refusal thrown with the step still sent may have changed the site.
 it("keeps the same refusal a possible change when the script left the step sent", async () => {
-  const failure = await outcomeOf(unchangedReadBack(false), site({ status: 200 }));
+  const failure = await outcomeOf(unchangedReadBack(false), site({ status: 422 }));
   expect(failure.outcome).toMatchObject({
     code: "input_rejected",
     writeStatus: "may_have_applied",

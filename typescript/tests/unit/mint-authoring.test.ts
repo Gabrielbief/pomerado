@@ -1175,21 +1175,23 @@ it("has a write retry an expired quote once, which Guardian's reviews accept", a
     "Nor is it when the site's own answer to the first click refused it as a whole and showed nothing was created, such as a quote that expired or a price that changed, and the step called notCommitted for that step once, refreshed the quote and checked it against the caller's limits before entering it again for one more click.",
   );
   expect(guardianPublicationPolicy).toContain(
-    "Nor is a `notCommitted` for a step right after the site's own answer to its click refused it as a whole and showed nothing was created, such as a commit response reporting an expired quote and no record, or after a fresh read of the record showed every field the write changes still at the script's own read before the mark, followed by a refusal, or an `OperationFailure`, with the site's words, or by one refresh, a check of the fresh quote against the caller's limits and one more entered click.",
+    "Nor is a `notCommitted` for a step right after the site's own answer to its click refused it as a whole and showed nothing was created, such as a commit response reporting an expired quote and no record, followed by a refusal, or an `OperationFailure`, with the site's words, or by one refresh, a check of the fresh quote against the caller's limits and one more entered click.",
   );
 });
 
-// A commit the page itself refused, or whose record reads back as the script read it before the
-// mark, goes back unsent with the site's proof, so the run reports the write not applied. Guardian
-// counts a put-back that rests on a timeout, silence or a missing element as a finding.
+// A commit the page itself refused, or one the site answered with an error other than a server error
+// whose record then reads back as the script read it before the mark, goes back unsent with the
+// site's proof, so the run reports the write not applied. A read-back counts only for fields the
+// write sends a different value for, and only toward a refusal, never another click. Guardian counts
+// a put-back that rests on a timeout, silence or a missing element as a finding.
 it("has a write put a step back only on the site's own refusal or an unchanged read-back", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
   expect(writes).toContain(
-    "When the page shows the site's own refusal of that write, or a fresh read of the record after the site answered shows every field the write changes still at your read before the mark, prefer calling `notCommitted` for that step with `{ siteRefused: true }` and ending as above; never on a timeout, silence or a missing element.",
+    "When the page shows the site's own refusal of that write, or the site answered the commit with an error that is not a server error and a fresh read of the same view you read before the mark shows each field whose sent value differs from that read unchanged, prefer the same put-back and ending as above; never on silence or a missing element.",
   );
   expect(guardianPublicationPolicy).toContain(
-    "A `notCommitted` resting on a timeout, silence or a missing element is a confirmation finding.",
+    "Nor is one after the site answered the click with an error that is not a server error and a fresh read of the same view the script read before the mark showed each field whose sent value differs from that read unchanged, followed by a refusal, or an `OperationFailure`, with the site's words, and no further click. A `notCommitted` resting on a timeout, silence or a missing element is a confirmation finding.",
   );
 });
 
@@ -1327,7 +1329,7 @@ it("renders the pinned standalone authoring", async () => {
     ["f3c485485bf431f4bf4b046f5f9629bef49c2b8b4b3ca8e187e1abe0f96a5976", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["2dd7cabe26d127855e4a8d2d6975b23e8b0999e6d1e227a1b6157dcb32e5c781", "forms"],
-    ["b418b8e45ea50221fe4e80e104f439dbc1dc3f0b367eaa65c1ca91d8a9ed6231", "writes"],
+    ["f8515e1b392188018212dc0fc23c359498b6af21273dfb37ada80a29782b84d5", "writes"],
     ["a0fd87e18a6655ecebdd988e6f7ea402748af5189bee0c84233b7d9173725c34", "cart"],
     ["da2819239f93381dfb614459659082e075ad8502f9851b879bade2582aed07cb", "caller-input"],
     ["8a3ae8ebe6c3d4b946265c44f9eeb1e092f356666cac629f050faf24ef49eb6d", "publication"],
