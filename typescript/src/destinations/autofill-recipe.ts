@@ -140,8 +140,8 @@ export const LegacyAutofillRecipe = Schema.Struct({
  * when it is 1 to 3 digits. It may say `delivery: "paste"` on an email-link approval whose link
  * signs in only the browser that opens it: a replay asks the owner to paste the link and opens it
  * itself. Each rides in every version from 2 without one of its own. A host that predates one
- * ignores it in a version 2 recipe, asking for the approval as before, and refuses a version 4 to 8
- * recipe that has it, as a host that predates `refills` refuses one with that.
+ * ignores it in a version 2 recipe, asking for the approval as before, and refuses a recipe of
+ * version 4 or later that has it, as a host that predates `refills` refuses one with that.
  */
 const PopupRecipeStep = Schema.Struct({
   ...RecipeStep.fields,

@@ -181,7 +181,7 @@ interface Answers {
   /** The sign-in link the owner pastes. */
   readonly link?: string;
 }
-const owner =(fake: ScriptedSite, answers: Answers = {}) => {
+const owner = (fake: ScriptedSite, answers: Answers = {}) => {
   const codes = [...(answers.codes ?? [code])];
   const dates = [...(answers.dates ?? [])];
   const prompts: string[] = [];

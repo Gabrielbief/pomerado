@@ -218,15 +218,17 @@ export const pastedLinkPrompt = (site: string) =>
   `Paste the newest sign-in link ${site} emailed you, without opening it. Pomerado keeps it private and opens it only in its own browser.`;
 
 /**
- * The link an owner pasted for an email-link approval, as the host opens it: an https address with
- * no user name or password, on the site or one of the sign-in origins the approval screen's
- * inspection trusted (`trustedUrl`). Anything else is undefined, and the host never opens it.
+ * The link an owner pasted for an email-link approval, as the host opens it, without the angle
+ * brackets or quotes around it: an https address with no user name or password, on the site or one
+ * of the sign-in origins the approval screen's inspection trusted (`trustedUrl`). Anything else is
+ * undefined, and the host never opens it.
  */
 export const pastedSignInLink = (
   pasted: string,
   trust: { readonly siteOrigin: string; readonly authenticationOrigins: readonly string[] },
 ) => {
-  const url = URL.parse(pasted.trim());
+  // A link pasted from an email may come inside angle brackets or quotes.
+  const url = URL.parse(pasted.trim().replace(/^[<"']+|[>"']+$/gu, ""));
   return url !== null &&
     url.protocol === "https:" &&
     trustedUrl(trust.siteOrigin, trust.authenticationOrigins, url.href)

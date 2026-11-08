@@ -40,12 +40,12 @@ export const withApprovalNumber = (prompt: string, number: string | undefined) =
 
 /**
  * An email-link approval recorded with `delivery: "paste"`, whose link signs in only the browser
- * that opens it: the owner pastes the link into a protected question, the broker registers it so
- * every copy masks it, and the replay opens it on the sign-in's tab, with no recording where the
- * host has one (`withoutRecording`), only when it is on the site or a sign-in origin the approval
- * screen's inspection trusted (`pastedSignInLink`). A link anywhere else is never opened
- * (`approval_link_refused`), and no answer is a decline. No event, outcome or recorded step holds
- * the link.
+ * that opens it: the owner pastes the link into a protected question, the replay registers it with
+ * the host's broker as `SIGN_IN_LINK` before anything opens it, and opens it on the sign-in's tab
+ * through the host's `withoutRecording` where it has one, only when `pastedSignInLink` accepts it.
+ * A link it doesn't accept is never opened (`approval_link_refused`), and no answer is a decline.
+ * The replay's events, outcomes and recorded step leave the link out; how its copies are masked,
+ * and the pages the link leads to, are the host's.
  */
 export const openPastedLink = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
