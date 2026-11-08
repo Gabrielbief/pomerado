@@ -61,7 +61,11 @@ export interface CommitMark {
 
 /** What a script says about a `notCommitted` call. */
 export interface NotCommittedOptions {
-  /** The site's own answer refused the step's click as a whole, with nothing created. */
+  /**
+   * The site's own answer refused the step's click as a whole, with nothing created: its commit
+   * response or its page refused that write, or a fresh read of the record after that answer shows
+   * every field the write changes still at the script's read before the mark.
+   */
   readonly siteRefused?: true;
 }
 

@@ -326,7 +326,11 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   `unaskable` (above): call `notCommitted` for that step with `{ siteRefused: true }`. Then prefer
   throwing `InvalidInput` with the site's words when it flags one or more fields and every one
   holds the caller's own value, since the caller can fix it, and `OperationFailure` with the site's
-  words otherwise, since the tool filled or left one of them wrong.
+  words otherwise, since the tool filled or left one of them wrong. When the page shows the site's
+  own refusal of that write, or a fresh read of the record after the site answered shows every
+  field the write changes still at your read before the mark, prefer calling `notCommitted` for
+  that step with `{ siteRefused: true }` and ending as above; never on a timeout, silence or a
+  missing element.
 - A quote the site issued earlier, such as a fare, rate, cart price or hold, can expire before
   the commit, for example while the step waits for review. Prefer having the commit step reload
   or re-select it right before its mark, so the site issues a fresh one, and check that one

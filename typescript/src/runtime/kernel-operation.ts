@@ -202,7 +202,10 @@ export interface KernelOperationContext<
    * It also fits a click the site's own answer refused as a whole with nothing created, such as a
    * commit response that reports an expired quote and returns no record: call it with
    * `{ siteRefused: true }`, then return the refusal, or refresh the quote, check it again and
-   * enter the step for one more click. Pass `siteRefused` only for such a refusal. When the page
+   * enter the step for one more click. Pass `siteRefused` only for such a refusal. The page's own
+   * refusal of that write counts, and so does a fresh read of the record after that answer showing
+   * every field the write changes still at the script's read before the mark; a timeout, silence
+   * or a missing element never does. When the page
    * flags fields or shows a validation message after the click, call `blockingRequiredFields`
    * first; when it returns `null` and the same form shows again, still holding the values the step
    * filled, with no next page or confirmation, the site refused the save as a whole. A host may
