@@ -321,7 +321,7 @@ it("allows asking, after a confirmed write, whether to publish without an output
     ),
   );
   expect(reviewPolicyOf(requests[0])).toContain(
-    "\n- outside maintenance, after a confirmed write (an act execution in trusted_execution_context.executions whose effect is verified), a question asking whether to publish without one requested output the site does not offer, or without one input the request marks optional that the site has no field for, is the caller's decision, when the evidence shows the site does not offer it and its prompt names that output and says it would be null with a reason, or names that input; prefer allow.\n- question_review.blockedOutcome is true:",
+    "\n- outside maintenance, after a confirmed write (an act execution in trusted_execution_context.executions whose effect is verified), a question asking whether to publish without one requested output the site does not offer, or without one input the request marks optional and submitted_call.input leaves unset that the site has no field for, is the caller's decision, when the evidence shows the site does not offer it and its prompt names that output and says it would be null with a reason, or names that input; prefer allow.\n- question_review.blockedOutcome is true:",
   );
 });
 
