@@ -1706,10 +1706,10 @@ it("ends a site_declined report as sign-in unavailable after a sign-in that neve
   expect(outcome.summary).not.toContain("did not survive");
 });
 
-// Every ending that tells the caller to change the request, or that the site or a check ruled it
-// out, is no truer than site_declined while the sign-in never confirmed. A Guardian refusal of an
-// earlier sign-in step, as of a field label, made a policy block possible; it ended the build that
-// way after a refused login whose message had gone.
+// Every ending that says the site or a check ruled the request out is no truer than site_declined
+// while the sign-in never confirmed. A Guardian refusal of an earlier sign-in step, as of a field
+// label, made a policy block possible; it ended the build that way after a refused login whose
+// message had gone.
 const refusedLabel = new MintFailure({
   code: "ReviewDenied",
   review: { outcome: "deny", reviewId: "review_label", rationale: "Wrong field label." },
@@ -2272,6 +2272,7 @@ it.each([
 it.each([
   { reason: "policy", refusal: "policy_not_refused" },
   { reason: "host_refused", refusal: "host_not_refused" },
+  { reason: "caller_input", refusal: "caller_input_not_cited" },
 ])(
   "refuses an unfounded $reason report after an unconfirmed sign-in as $refusal",
   async ({ reason, refusal }) => {
