@@ -3091,8 +3091,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * backoff; the agent may resubmit while reviews have been unavailable for less than the
        * outage budget, and any completed review starts the budget again. A review whose evidence
        * could not be retained is such an outage too. Past the budget, `exhausted` ends the attempt,
-       * as it does at once for a request over Guardian's model input limit (`InputTooLarge`), which
-       * fails the same way when resubmitted.
+       * as it does at once for a request the provider refused as over Guardian's model input limit,
+       * or for an encrypted item it could not decrypt (`InputTooLarge`), which fails the same way
+       * when resubmitted.
        */
       const reviewUnavailableRetry =
         (
@@ -4070,8 +4071,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           rationale:
                             "Guardian returned no decision a question review allows, so it neither allowed nor reworded the explanation. Make it plain and consistent with the evidence.",
                         };
-                  // A spent quota, a request over the model's input limit or an outage past its
-                  // budget still ends blocked: the caller reads the reason alone.
+                  // A spent quota, a request the provider refused for good (`InputTooLarge`) or an
+                  // outage past its budget still ends blocked: the caller reads the reason alone.
                   if (
                     error.code !== "ReviewUnavailable" ||
                     error.modelOutage === "quota_exhausted" ||

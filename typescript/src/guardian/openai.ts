@@ -41,6 +41,7 @@ import {
   modelFailureMetadata,
   modelCauseMetadata,
   overContextWindow,
+  unreadableEncryptedItem,
 } from "../models/model-failure.js";
 import type { ModelFailureMetadata } from "../models/model-failure.js";
 import type { AgentInputItem, ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
@@ -898,7 +899,7 @@ const reviewerWithPolicy = (
                       ? "TurnLimitExceeded"
                       : callStalled
                         ? "ModelCallStalled"
-                        : overContextWindow(finite)
+                        : overContextWindow(finite) || unreadableEncryptedItem(finite)
                           ? "InputTooLarge"
                           : "Unavailable";
                   quotaExhausted =
