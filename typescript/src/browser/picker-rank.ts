@@ -10,7 +10,7 @@ export interface PickerChoice {
 }
 
 /** How closely the winning option matched, best first. */
-export const pickerRanks = ["exact", "normalized", "folded", "leading", "words", "allWords", "stem"] as const;
+export const pickerRanks = ["exact", "normalized", "folded", "leading", "words", "allWords", "stem", "extraWords"] as const;
 export type PickerRank = (typeof pickerRanks)[number];
 
 export type PickerRanking =
@@ -40,11 +40,15 @@ export type PickerRanking =
  * words pair when they are equal, or when both are Latin letters only and the shorter, of five or
  * more letters, is the whole start of the longer, such as Dentist and Dentistry or Dentists and
  * Dentist, but not Employee and Employer, County and Country, Physician and Physics, Adam and
- * Adams, or UK and Ukraine. The value never matches by stem. A name beats the value at each rank.
+ * Adams, or UK and Ukraine. Then, only with `options.extraWords`, a name holding every word of a
+ * spelling, in any order and among words the spelling lacks, each paired with one of its words as
+ * `stem` pairs them (`extraWords`: Green Seedless Grapes for green grape), as a product search
+ * asks for. The value never matches by stem. A name beats the value at each rank.
  * Options at the first rank that matches decide: one option (by key) is picked, or reported
  * disabled when every copy of it is; two or more are ambiguous, never guessed. A weaker rank never
  * overrules a stronger one, so a disabled exact match is not replaced by a looser one. Without
- * `options.leading`, no option ranks `leading`; without `options.stem`, none ranks `stem`. With
+ * `options.leading`, no option ranks `leading`; without `options.stem`, none ranks `stem`; without
+ * `options.extraWords`, none ranks `extraWords`. With
  * `options.spellings`, such as `spellingsOf`, each rank also tries the other written forms of a
  * spelling against option names, never values, once the spellings as given match nothing at that
  * rank: so Fifth Avenue for 5th Avenue matches as a name before any option holding the same words
@@ -64,6 +68,7 @@ export const rankChoices = (
   options: {
     readonly leading?: boolean;
     readonly stem?: boolean;
+    readonly extraWords?: boolean;
     readonly spellings?: (
       text: string,
       options?: { readonly places?: "end" | "after-words" | "never" },
@@ -234,6 +239,19 @@ export const rankChoices = (
         return choice.names.some((name) => {
           const have = named.words(name);
           return wants.some((want) => want.length === have.length && want.every((word, at) => pairs(word, have[at] ?? "")));
+        });
+      },
+      true,
+    ],
+    [
+      "extraWords",
+      // Every word of the spelling, in any order, among words it lacks.
+      (choice, list) => {
+        if (options.extraWords !== true) return false;
+        const wants = wordLists(list);
+        return choice.names.some((name) => {
+          const have = named.words(name);
+          return wants.some((want) => want.every((word) => have.some((each) => pairs(word, each))));
         });
       },
       true,

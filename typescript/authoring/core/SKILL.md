@@ -245,6 +245,13 @@ exception: it is optional unless the task can't run without it (below).
   When more than one option matches equally, decide per tool: take the first in the site's
   order and return the one it used, as the site labels it, or list them for the caller to
   choose one, each selecting exactly one.
+- In a product or catalog search, unlike a proper noun, a result whose name has every word of
+  the caller's value, in any order, each as written or sharing its stem, matches even with words
+  the value lacks, when it names the item itself rather than something made from it or flavored
+  with it. The site's own ranking already weighs relevance, so take the first such result in the
+  site's order and return the one it used, as the site labels it. With none, throw `InvalidInput`
+  with `field` and `available`, the closest names first. `pickValue` matches such names with
+  `extraWords: true`, and takes the first with `tie: "first"`.
 - Look up anything the caller names that the site can search, such as a place, business,
   product, provider or record, through the site's own search, typeahead or picker, rather than
   matching only the options the page already shows, such as a menu of popular choices or the

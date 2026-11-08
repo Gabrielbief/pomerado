@@ -398,7 +398,7 @@ describe("rankChoices extra words", () => {
       rank: "extraWords",
     });
     // A stronger rank still wins, and the pick decodes with its rank.
-    expect(extraRank([...results, choice("Green Grapes")], "green grapes")).toEqual({ status: "picked", index: 2, rank: "exact" });
+    expect(extraRank([...results, choice("Green Grapes")], "green grapes")).toEqual({ status: "picked", index: 2, rank: "normalized" });
     const pick = { picked: true, kind: "typeahead", label: "Green Seedless Grapes", value: "", rank: "extraWords", refills: 0 };
     expect(Schema.decodeUnknownSync(PickOutcome)(pick)).toEqual(pick);
   });
