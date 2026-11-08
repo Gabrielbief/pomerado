@@ -24,6 +24,7 @@ import { validateAnswer } from "../../src/runtime/input-request.js";
 import type { ModelRequest } from "@openai/agents";
 import { Deadline } from "../../src/runtime/deadline.js";
 import { runMint } from "../../src/mint/harness.js";
+import { failureDetail } from "../../src/runtime/failure-detail.js";
 import { EventUnavailable } from "../../src/runtime/errors.js";
 
 const cleanup: (() => Promise<void>)[] = [];
@@ -571,6 +572,10 @@ it.each([
 
 // A review request over Guardian's model input limit fails the same way when resubmitted, so it
 // ends the attempt at once instead of offering resubmissions until the outage budget runs out.
+// The outcome names the provider's own code and HTTP status.
+const providerRefusal = failureDetail("guardian_dependency_failed", {
+  context: { providerCode: "invalid_encrypted_content", httpStatus: 400 },
+});
 it.each([
   {
     kind: "execution review",
@@ -581,6 +586,7 @@ it.each([
       reviewFailure: "InputTooLarge",
       reviewPhase: "review_computation",
       reviewDispatch: "not_sent",
+      failureDetail: providerRefusal,
     }),
   },
   {
@@ -591,6 +597,7 @@ it.each([
       code: "ReviewUnavailable",
       reviewFailure: "InputTooLarge",
       reviewPhase: "review_computation",
+      failureDetail: providerRefusal,
     }),
   },
 ])(
@@ -616,9 +623,14 @@ it.each([
         }),
       exampleFirst ? { publish: failing } : { reviewAndExecute: failing },
     );
-    expect(await f.run()).toMatchObject({
-      build: "incomplete",
-      hostFailure: "review_unavailable",
+    const outcome = await f.run();
+    expect(outcome).toMatchObject({ build: "incomplete", hostFailure: "review_unavailable" });
+    expect(outcome.diagnostics.map((entry): unknown => JSON.parse(entry))).toContainEqual({
+      phase: "review",
+      reason: "review_unavailable",
+      code: "InputTooLarge",
+      providerCode: "invalid_encrypted_content",
+      httpStatus: 400,
     });
     expect(calls).toBe(1);
   },
