@@ -310,8 +310,8 @@ it("keeps a repair's caller-input question to invalid or real", async () => {
 // A write build's one real write was done and confirmed when it found the site offers one of the
 // requested outputs by email only. Outside maintenance nothing allowed a question about publishing
 // without it, so the build ended blocked with no tool. After a confirmed write only, that question
-// is the caller's decision.
-it("allows asking, after a confirmed write, whether to publish without an output the site does not offer", async () => {
+// is the caller's decision, and so is one about an optional input the site has no field for.
+it("allows asking, after a confirmed write, whether to publish without an output or optional input the site does not offer", async () => {
   const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
   await Effect.runPromise(
     makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
@@ -321,7 +321,7 @@ it("allows asking, after a confirmed write, whether to publish without an output
     ),
   );
   expect(reviewPolicyOf(requests[0])).toContain(
-    "\n- outside maintenance, after a confirmed write (an act execution in trusted_execution_context.executions whose effect is verified), a question asking whether to publish without one requested output the site does not offer is the caller's decision, when the evidence shows the site does not offer it and its prompt names that output and says it would be null with a reason; prefer allow.\n- question_review.blockedOutcome is true:",
+    "\n- outside maintenance, after a confirmed write (an act execution in trusted_execution_context.executions whose effect is verified), a question asking whether to publish without one requested output the site does not offer, or without one input the request marks optional, that neither submitted_call.input, trusted intent nor an earlier answer gives a value for, and the site has no field for, is the caller's decision, when the evidence shows the site does not offer it and its prompt names that output and says it would be null with a reason, or names that input; prefer allow.\n- question_review.blockedOutcome is true:",
   );
 });
 
