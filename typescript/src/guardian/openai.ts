@@ -41,6 +41,7 @@ import {
   modelFailureMetadata,
   modelCauseMetadata,
   overContextWindow,
+  unreadableEncryptedItem,
 } from "../models/model-failure.js";
 import type { ModelFailureMetadata } from "../models/model-failure.js";
 import type { AgentInputItem, ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
@@ -898,38 +899,37 @@ const reviewerWithPolicy = (
                       ? "TurnLimitExceeded"
                       : callStalled
                         ? "ModelCallStalled"
-                        : overContextWindow(finite)
+                        : overContextWindow(finite) || unreadableEncryptedItem(finite)
                           ? "InputTooLarge"
                           : "Unavailable";
                   quotaExhausted =
                     providerQuotaExhausted(error) || finite.code === "insufficient_quota";
-                  reviewComputationDetail =
-                    !turn.session && turn.pending.publication === undefined
-                      ? failureDetail(
-                          quotaExhausted ? "model_quota_exhausted" : "guardian_dependency_failed",
-                          {
-                            operation: "runner.run",
-                            phase: "review_computation",
-                            // A private kind's error text may echo its request or output.
-                            ...(privateKind ? {} : { error }),
-                            context: {
-                              kind: finite.kind,
-                              code: finite.code,
-                              httpStatus: finite.httpStatus,
-                              causeCode: finite.causeCode,
-                              providerCode: finite.providerCode,
-                              requestId: finite.requestId,
-                            },
-                          },
-                        )
-                      : undefined;
+                  // Every review names the provider's finite fields, such as its code and HTTP
+                  // status. A private kind's error text may echo its request or output, and so may
+                  // a session's or a publication's, so only other reviews keep the error itself.
+                  reviewComputationDetail = failureDetail(
+                    quotaExhausted ? "model_quota_exhausted" : "guardian_dependency_failed",
+                    {
+                      operation: "runner.run",
+                      phase: "review_computation",
+                      ...(privateKind || turn.session || turn.pending.publication !== undefined
+                        ? {}
+                        : { error }),
+                      context: {
+                        kind: finite.kind,
+                        code: finite.code,
+                        httpStatus: finite.httpStatus,
+                        causeCode: finite.causeCode,
+                        providerCode: finite.providerCode,
+                        requestId: finite.requestId,
+                      },
+                    },
+                  );
                   return new ReviewFailure({
                     code: failureCode,
                     reviewPhase: "review_computation",
                     ...(quotaExhausted ? { modelQuotaExhausted: true } : {}),
-                    ...(reviewComputationDetail === undefined
-                      ? {}
-                      : { failureDetail: reviewComputationDetail }),
+                    failureDetail: reviewComputationDetail,
                   });
                 },
               }),
