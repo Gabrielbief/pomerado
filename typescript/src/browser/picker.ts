@@ -528,10 +528,10 @@ const pickerPageCode = String.raw`(element, args) => {
  * Harbor Street Station, Example City for Example City Harbor Street Station), then, only with `options.stem` set to true (as a read sets it; `pickValues` takes it too), a name with
  * as many words as the value whose words each equal the value's in order or, for words of Latin
  * letters only, begin the value's or begin with them, the shorter of five or more letters, such as
- * Dentistry for Dentist (rank `stem`), then, only with `options.extraWords` set to true, a name
- * holding every word of the value, in any order and among words the value lacks, each paired with
- * one of its words as the rank `stem` pairs them, such as Green Seedless Grapes for green grape
- * (rank `extraWords`). An option's names are its text, first line, accessible name,
+ * Dentistry for Dentist (rank `stem`), then, only with `options.extraWords` set to true and a
+ * value with no digit, a name holding every word of the value, in any order and among words the
+ * value lacks, each as written or in its singular or plural form, such as Green Seedless Grapes
+ * for green grape but not Lemonade for lemon (rank `extraWords`). An option's names are its text, first line, accessible name,
  * `title` and, for a table row, each cell, and its value is `data-value`, `value`, `data-id`,
  * `data-key` or `data-code` (put others first with `options.valueAttributes`). At each rank, once
  * the value as given matches no name there, its other written forms (`spellingsOf`: 5th and Fifth,
