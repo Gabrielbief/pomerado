@@ -486,6 +486,21 @@ it("fails a review over the model's context window once, without reviewing again
   expect(review.retried).toEqual([]);
 });
 
+it("fails a review whose encrypted item the provider cannot read back once, without reviewing again", async () => {
+  const review = await failingModelReview(() =>
+    Object.assign(new Error("400 Synthetic encrypted content could not be verified"), {
+      name: "BadRequestError",
+      status: 400,
+      code: "invalid_encrypted_content",
+    }),
+  );
+  expect(review.result).toMatchObject({ _tag: "Left", left: { code: "InputTooLarge" } });
+  // The provider refuses the same item each time it is sent again, so the outage retry neither
+  // waits nor sends it again.
+  expect(review.calls).toBe(1);
+  expect(review.retried).toEqual([]);
+});
+
 it("still reviews again after any other provider error, within the outage budget", async () => {
   const review = await failingModelReview(() => serverError("server_error"));
   expect(review.result).toMatchObject({ _tag: "Left", left: { code: "Unavailable" } });
